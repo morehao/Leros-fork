@@ -57,8 +57,29 @@ func WithGinContext(ctx *gin.Context, caller *Caller, trace *Trace) {
 
 // FromContext 从上下文中提取 Caller 和 Trace 信息。
 func FromContext(ctx context.Context) (*Caller, *Trace) {
-	caller, _ := ctx.Value(ctxKeyCaller).(*Caller)
-	trace, _ := ctx.Value(ctxKeyTrace).(*Trace)
+	if ctx == nil {
+		return nil, nil
+	}
+	var (
+		caller *Caller
+		trace  *Trace
+	)
+	{
+		val := ctx.Value(ctxKeyCaller)
+		if val == nil {
+			caller = nil
+		} else {
+			caller, _ = val.(*Caller)
+		}
+	}
+	{
+		val := ctx.Value(ctxKeyTrace)
+		if val == nil {
+			trace = nil
+		} else {
+			trace, _ = val.(*Trace)
+		}
+	}
 	return caller, trace
 }
 

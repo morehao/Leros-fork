@@ -75,8 +75,9 @@ func (m *Manager) Run(ctx context.Context, key string, params map[string]any, op
 	}
 
 	var cfg config.LLMConfig
+	defaultLLMConfigOption(ctx, &cfg)
 	for _, o := range opts {
-		o(&cfg)
+		o(ctx, &cfg)
 	}
 
 	rendered := fasttemplate.New(tpl, "{", "}").ExecuteFuncString(func(w io.Writer, tag string) (int, error) {
@@ -93,6 +94,7 @@ func (m *Manager) Run(ctx context.Context, key string, params map[string]any, op
 var (
 	globalManager = &Manager{
 		templates: make(map[string]string),
+		executor:  NewEinoExecutor(),
 	}
 )
 
