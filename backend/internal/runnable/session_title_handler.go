@@ -10,6 +10,7 @@ import (
 	"github.com/insmtx/Leros/backend/internal/api/contract"
 	eventbus "github.com/insmtx/Leros/backend/internal/infra/mq"
 	"github.com/insmtx/Leros/backend/pkg/dm"
+	"github.com/insmtx/Leros/backend/types"
 	"github.com/ygpkg/yg-go/logs"
 )
 
@@ -29,17 +30,17 @@ func StartSessionTitleHandler(ctx context.Context, service contract.SessionServi
 }
 
 func handleSessionTitleRequest(ctx context.Context, service contract.SessionService, msg *nats.Msg) {
-	var req contract.SessionTitleRequest
-	if err := json.Unmarshal(msg.Data, &req); err != nil {
-		logs.WarnContextf(ctx, "unmarshal session title request: %v", err)
+	var message types.SessionMessage
+	if err := json.Unmarshal(msg.Data, &message); err != nil {
+		logs.WarnContextf(ctx, "unmarshal session message: %v", err)
 		return
 	}
-	if req.SessionID == "" {
-		logs.WarnContextf(ctx, "session title request missing session ID")
+	if message.ID == 0 {
+		logs.WarnContextf(ctx, "session message missing ID")
 		return
 	}
 	ctx = auth.WithContext(ctx, auth.SystemIdentity(), nil)
-	if err := service.HandleSessionTitleRequest(ctx, &req); err != nil {
+	if err := service.HandleSessionTitleRequest(ctx, message.SessionID); err != nil {
 		logs.WarnContextf(ctx, "handle session title request: %v", err)
 	}
 }

@@ -291,17 +291,13 @@ func (s *sessionService) AddMessage(ctx context.Context, sessionID uint, req *co
 		return nil, err
 	}
 
-	if session.OrgID > 0 && session.MessageCount < 3 {
+	if session.OrgID > 0 {
 		topic, err := dm.SessionMessageRequestSubject(session.OrgID, session.SessionID)
 		if err != nil {
-			logs.WarnContextf(ctx, "failed to build title request subject: %v", err)
+			logs.WarnContextf(ctx, "failed to build message request subject: %v", err)
 		} else {
-			titleReq := &contract.SessionTitleRequest{
-				SessionID: session.SessionID,
-				Content:   req.Content,
-			}
-			if err := s.eventbus.Publish(ctx, topic, titleReq); err != nil {
-				logs.WarnContextf(ctx, "failed to publish title update request: %v", err)
+			if err := s.eventbus.Publish(ctx, topic, message); err != nil {
+				logs.WarnContextf(ctx, "failed to publish message to eventbus: %v", err)
 			}
 		}
 	}
@@ -353,7 +349,7 @@ func (s *sessionService) buildMessage(req *contract.AddMessageRequest, sequence 
 	return message
 }
 
-func (s *sessionService) tryAutoUpdateTitle(ctx context.Context, session *types.Session, content string) {
+func (s *sessionService) tryAutoUpdateTitle(ctx context.Context, session *types.Session) {
 	if session.TitleManuallySet {
 		return
 	}
@@ -361,48 +357,69 @@ func (s *sessionService) tryAutoUpdateTitle(ctx context.Context, session *types.
 		return
 	}
 
-	if err := s.renameSession(ctx, session, content); err != nil {
+	if err := s.renameSession(ctx, session); err != nil {
 		logs.WarnContextf(ctx, "failed to auto-update session title: %v", err)
 	}
 }
 
-func (s *sessionService) renameSession(ctx context.Context, session *types.Session, content string) error {
+func (s *sessionService) renameSession(ctx context.Context, session *types.Session) error {
+	recentMessages := s.buildRecentMessages(ctx, session.SessionID)
+
 	title, err := prompts.Run(ctx, prompts.KeySessionTitle, map[string]any{
-		"content":       content,
-		"current_title": session.Title,
+		"current_title":   session.Title,
+		"recent_messages": recentMessages,
 	})
+	title = strings.TrimSpace(title)
 	if err != nil {
 		logs.WarnContextf(ctx, "LLM title generation failed, fallback: %v", err)
 		if session.Title != "" && session.Title != "新会话" {
 			return nil
 		}
-		runes := []rune(content)
-		if len(runes) > 100 {
-			title = string(runes[:100])
-		} else {
-			title = content
+		latestMsg, _ := db.GetLatestMessage(ctx, s.db, session.SessionID)
+		if latestMsg != nil {
+			runes := []rune(latestMsg.Content)
+			if len(runes) > 100 {
+				title = string(runes[:100])
+			} else {
+				title = latestMsg.Content
+			}
 		}
-	} else {
-		title = strings.TrimSpace(title)
-		if title == "KEEP" {
+		if title == "" {
 			return nil
 		}
+	} else if title == "KEEP" {
+		return nil
 	}
+	logs.InfoContextf(ctx, "auto-updating session title to: %s, old title: %s", title, session.Title)
 	session.Title = title
 	session.UpdatedAt = time.Now()
 	return db.UpdateSession(ctx, s.db, session)
 }
 
-func (s *sessionService) HandleSessionTitleRequest(ctx context.Context, req *contract.SessionTitleRequest) error {
-	session, err := db.GetSessionBySessionID(ctx, s.db, req.SessionID)
+func (s *sessionService) buildRecentMessages(ctx context.Context, sessionID string) string {
+	const maxMessages = 10
+	messages, err := db.GetRecentSessionMessages(ctx, s.db, sessionID, maxMessages)
+	if err != nil || len(messages) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, msg := range messages {
+		sb.WriteString(fmt.Sprintf("%s: %s\n", msg.Role, msg.Content))
+	}
+	return sb.String()
+}
+
+func (s *sessionService) HandleSessionTitleRequest(ctx context.Context, sessionID string) error {
+	session, err := db.GetSessionBySessionID(ctx, s.db, sessionID)
 	if err != nil {
-		return fmt.Errorf("get session %s: %w", req.SessionID, err)
+		return fmt.Errorf("get session %s: %w", sessionID, err)
 	}
 	if session == nil {
 		return nil
 	}
 
-	s.tryAutoUpdateTitle(ctx, session, req.Content)
+	logs.DebugContextf(ctx, "handling session title request for session %s", sessionID)
+	s.tryAutoUpdateTitle(ctx, session)
 	return nil
 }
 
@@ -727,9 +744,6 @@ func (s *sessionService) CompleteSessionMessage(ctx context.Context, req *contra
 	}
 
 	now := time.Now()
-	if err := db.IncrementMessageCount(ctx, s.db, session.ID); err != nil {
-		logs.WarnContextf(ctx, "increment count for %s: %v", req.SessionID, err)
-	}
 	if err := db.UpdateLastMessageAt(ctx, s.db, session.ID, now); err != nil {
 		logs.WarnContextf(ctx, "update last_message_at for %s: %v", req.SessionID, err)
 	}
@@ -772,9 +786,6 @@ func (s *sessionService) FailedSessionMessage(ctx context.Context, req *contract
 	}
 
 	now := time.Now()
-	if err := db.IncrementMessageCount(ctx, s.db, session.ID); err != nil {
-		logs.WarnContextf(ctx, "increment count for %s: %v", req.SessionID, err)
-	}
 	if err := db.UpdateLastMessageAt(ctx, s.db, session.ID, now); err != nil {
 		logs.WarnContextf(ctx, "update last_message_at for %s: %v", req.SessionID, err)
 	}
