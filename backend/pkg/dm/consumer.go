@@ -2,11 +2,6 @@ package dm
 
 import "fmt"
 
-// OrchestratorConsumer 构造 orchestrator 的持久化消费者名称。
-func OrchestratorConsumer(topic string) string {
-	return fmt.Sprintf("orchestrator-%s", topic)
-}
-
 // WorkerTaskConsumer 构造 worker 任务消费者的持久化消费者名称。
 func WorkerTaskConsumer(orgID, workerID uint) string {
 	return fmt.Sprintf("worker-task-%d-%d", orgID, workerID)
