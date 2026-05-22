@@ -17,10 +17,6 @@ func TestAdapterAskCurrentTime(t *testing.T) {
 	if err != nil {
 		t.Skip("codex CLI not found in PATH")
 	}
-	apiKey := firstNonEmptyEnv("LEROS_LLM_API_KEY")
-	if apiKey == "" {
-		t.Skip("set LEROS_LLM_API_KEY to run the real codex adapter test")
-	}
 
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -35,9 +31,9 @@ func TestAdapterAskCurrentTime(t *testing.T) {
 		Prompt:  "Answer with the current system time. Do not modify files.",
 		Model: engines.ModelConfig{
 			Provider: "openai",
-			APIKey:   apiKey,
-			Model:    firstNonEmptyEnv("LEROS_LLM_MODEL"),
-			BaseURL:  firstNonEmptyEnv("LEROS_LLM_BASE_URL"),
+			APIKey:   "sk-test",
+			Model:    "deepseek/deepseek-v4-flash",
+			BaseURL:  "http://127.0.0.1:8081",
 		},
 		Timeout: 2 * time.Minute,
 	})
@@ -95,11 +91,46 @@ func TestParseCodexLineEmitsTodoSnapshot(t *testing.T) {
 	}
 }
 
-func firstNonEmptyEnv(keys ...string) string {
-	for _, key := range keys {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			return value
-		}
+func TestBuildArgsInjectsLerosProviderConfig(t *testing.T) {
+	args := buildArgs("", false, engines.RunRequest{
+		Model: engines.ModelConfig{
+			Model:   "gpt-test",
+			BaseURL: "http://127.0.0.1:8081",
+		},
+	})
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, `model_provider="leros"`) {
+		t.Fatalf("expected leros provider config, got %v", args)
 	}
-	return ""
+	if !strings.Contains(joined, `model_providers.leros.base_url="http://127.0.0.1:8081/v1"`) {
+		t.Fatalf("expected leros provider base url config, got %v", args)
+	}
+	if !strings.Contains(joined, `model_providers.leros.env_key="OPENAI_API_KEY"`) {
+		t.Fatalf("expected leros provider env key config, got %v", args)
+	}
+	if strings.Contains(joined, `model_providers.leros.wire_api`) {
+		t.Fatalf("unexpected wire api config: %v", args)
+	}
+	if !strings.Contains(joined, "--model gpt-test") {
+		t.Fatalf("expected model arg, got %v", args)
+	}
+}
+
+func TestCodexModelEnvUsesOpenAIEnvKeys(t *testing.T) {
+	env := codexModelEnv(engines.ModelConfig{
+		APIKey:  "sk-test",
+		BaseURL: "http://127.0.0.1:8081",
+	})
+	if env["OPENAI_API_KEY"] != "sk-test" {
+		t.Fatalf("unexpected api key env: %#v", env)
+	}
+	if env["OPENAI_API_BASE"] != "http://127.0.0.1:8081/v1" {
+		t.Fatalf("unexpected api base env: %#v", env)
+	}
+	if env["OPENAI_BASE_URL"] != "http://127.0.0.1:8081/v1" {
+		t.Fatalf("unexpected base url env: %#v", env)
+	}
+	if env["CODEX_QUIET_MODE"] != "1" {
+		t.Fatalf("unexpected quiet mode env: %#v", env)
+	}
 }

@@ -23,9 +23,9 @@ import (
 
 // const AgentRuntime = "leros"
 
-const AgentRuntime = "claude"
+// const AgentRuntime = "claude"
 
-// const AgentRuntime = "codex"
+const AgentRuntime = "codex"
 
 func TestPublishWorkerTaskMessageToNATS(t *testing.T) {
 	natsURL := getenv("LEROS_TEST_NATS_URL", "nats://localhost:4222")

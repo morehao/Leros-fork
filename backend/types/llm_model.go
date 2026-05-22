@@ -44,6 +44,8 @@ type LLMModel struct {
 	ModelName string `gorm:"column:model;type:varchar(255);not null"`
 	// API基础地址，官方默认地址可为空，自定义网关或兼容接口需填写
 	BaseURL string `gorm:"column:base_url;type:varchar(500)"`
+	// 是否已确认基础地址包含 /v1 前缀，记录连通性探测结果。默认 true 以兼容已有数据。
+	BaseURLHasV1 bool `gorm:"column:base_url_has_v1;type:boolean;default:true"`
 
 	// API Key密文，业务读取时需要通过统一密钥服务解密
 	APIKeyEncrypted string `gorm:"column:api_key_encrypted;type:text"`

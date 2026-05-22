@@ -23,12 +23,14 @@ import (
 var _ contract.LLMModelService = (*llmModelService)(nil)
 
 type llmModelService struct {
-	db *gorm.DB
+	db        *gorm.DB
+	probeFunc func(ctx context.Context, provider, modelName, apiKey, baseURL string, preferV1 bool) *probeResult
 }
 
 func NewLLMModelService(db *gorm.DB) contract.LLMModelService {
 	return &llmModelService{
-		db: db,
+		db:        db,
+		probeFunc: probeConnectivity,
 	}
 }
 
@@ -51,6 +53,16 @@ func (s *llmModelService) CreateLLMModel(ctx context.Context, req *contract.Crea
 	name := utils.DefaultString(req.Name, req.Model)
 	provider := utils.DefaultString(req.Provider, string(types.LLMProviderOpenAI))
 	baseURL := normalizeLLMBaseURL(req.BaseURL)
+	hasV1 := detectURLHasV1(req.BaseURL)
+
+	var probeResult *probeResult
+	if provider == string(types.LLMProviderOpenAI) || provider == string(types.LLMProviderCustom) {
+		probeResult = s.probeFunc(ctx, provider, req.Model, req.APIKey, baseURL, hasV1)
+		if probeResult == nil || (!probeResult.v1Success && !probeResult.noV1Success) {
+			return nil, errors.New("connectivity test failed: could not connect with or without /v1 prefix, check base_url, api_key and network")
+		}
+		hasV1 = probeResult.v1Success
+	}
 
 	model := &types.LLMModel{
 		OrgID:           caller.OrgID,
@@ -60,6 +72,7 @@ func (s *llmModelService) CreateLLMModel(ctx context.Context, req *contract.Crea
 		Provider:        provider,
 		ModelName:       req.Model,
 		BaseURL:         baseURL,
+		BaseURLHasV1:    hasV1,
 		APIKeyEncrypted: req.APIKey,
 		APIKeyMasked:    maskAPIKey(req.APIKey),
 		MaxTokens:       4096,
@@ -151,6 +164,8 @@ func (s *llmModelService) UpdateLLMModel(ctx context.Context, id uint, req *cont
 			return errors.New("permission denied")
 		}
 
+		needsReDetect := false
+
 		if req.Name != "" {
 			model.Name = req.Name
 		}
@@ -159,16 +174,20 @@ func (s *llmModelService) UpdateLLMModel(ctx context.Context, id uint, req *cont
 		}
 		if req.Provider != "" {
 			model.Provider = req.Provider
+			needsReDetect = true
 		}
 		if req.Model != "" {
 			model.ModelName = req.Model
+			needsReDetect = true
 		}
 		if req.BaseURL != nil {
 			model.BaseURL = normalizeLLMBaseURL(*req.BaseURL)
+			needsReDetect = true
 		}
 		if req.APIKey != nil {
 			model.APIKeyEncrypted = *req.APIKey
 			model.APIKeyMasked = maskAPIKey(*req.APIKey)
+			needsReDetect = true
 		}
 		if req.Status != "" {
 			model.Status = req.Status
@@ -182,6 +201,21 @@ func (s *llmModelService) UpdateLLMModel(ctx context.Context, id uint, req *cont
 				if err := clearOrgDefaultLLMModels(ctx, tx, caller.OrgID, model.ID); err != nil {
 					return err
 				}
+			}
+		}
+
+		if needsReDetect {
+			provider := model.Provider
+			if provider == string(types.LLMProviderOpenAI) || provider == string(types.LLMProviderCustom) {
+				probeResult := s.probeFunc(ctx, provider, model.ModelName, model.APIKeyEncrypted, model.BaseURL, model.BaseURLHasV1)
+				if probeResult == nil || (!probeResult.v1Success && !probeResult.noV1Success) {
+					return errors.New("connectivity test failed after update: could not connect with or without /v1 prefix, check the updated fields")
+				}
+				model.BaseURLHasV1 = probeResult.v1Success
+			} else {
+				// For non-OpenAI providers, keep existing flag or detect from URL path pattern
+				hasV1 := detectURLHasV1(model.BaseURL + "/v1/chat/completions")
+				model.BaseURLHasV1 = hasV1
 			}
 		}
 
@@ -246,6 +280,7 @@ func (s *llmModelService) TestLLMModel(ctx context.Context, req *contract.TestLL
 	apiKey := strings.TrimSpace(req.APIKey)
 	provider := strings.TrimSpace(req.Provider)
 	modelName := strings.TrimSpace(req.Model)
+	var baseURLHasV1 bool
 	if req.ID != nil || req.Code != "" {
 		var model *types.LLMModel
 		if req.ID != nil {
@@ -263,6 +298,7 @@ func (s *llmModelService) TestLLMModel(ctx context.Context, req *contract.TestLL
 			return nil, errors.New("permission denied")
 		}
 		baseURL = model.BaseURL
+		baseURLHasV1 = model.BaseURLHasV1
 		apiKey = model.APIKeyEncrypted
 		if provider == "" {
 			provider = model.Provider
@@ -285,20 +321,24 @@ func (s *llmModelService) TestLLMModel(ctx context.Context, req *contract.TestLL
 		return nil, errors.New("model is required")
 	}
 
+	// Build endpoint URL using the stored flag
+	endpointURL := buildLLMEndpointURL(baseURL, baseURLHasV1)
+
 	start := time.Now()
 	chatModel, err := agenteino.NewChatModel(ctx, &config.LLMConfig{
 		Provider: provider,
 		APIKey:   apiKey,
 		Model:    modelName,
-		BaseURL:  baseURL,
+		BaseURL:  endpointURL,
 	})
 	latencyMS := time.Since(start).Milliseconds()
 	if err != nil {
 		return &contract.TestLLMModelResponse{
-			Success:   false,
-			Message:   err.Error(),
-			Endpoint:  baseURL,
-			LatencyMS: latencyMS,
+			Success:      false,
+			Message:      err.Error(),
+			Endpoint:     endpointURL,
+			LatencyMS:    latencyMS,
+			BaseURLHasV1: baseURLHasV1,
 		}, nil
 	}
 
@@ -309,10 +349,11 @@ func (s *llmModelService) TestLLMModel(ctx context.Context, req *contract.TestLL
 	})
 	if err != nil {
 		return &contract.TestLLMModelResponse{
-			Success:   false,
-			Message:   err.Error(),
-			Endpoint:  baseURL,
-			LatencyMS: time.Since(start).Milliseconds(),
+			Success:      false,
+			Message:      err.Error(),
+			Endpoint:     endpointURL,
+			LatencyMS:    time.Since(start).Milliseconds(),
+			BaseURLHasV1: baseURLHasV1,
 		}, nil
 	}
 
@@ -320,10 +361,11 @@ func (s *llmModelService) TestLLMModel(ctx context.Context, req *contract.TestLL
 	latencyMS = time.Since(start).Milliseconds()
 	if err != nil {
 		return &contract.TestLLMModelResponse{
-			Success:   false,
-			Message:   err.Error(),
-			Endpoint:  baseURL,
-			LatencyMS: latencyMS,
+			Success:      false,
+			Message:      err.Error(),
+			Endpoint:     endpointURL,
+			LatencyMS:    latencyMS,
+			BaseURLHasV1: baseURLHasV1,
 		}, nil
 	}
 	responseMessage := "model call succeeded"
@@ -331,10 +373,11 @@ func (s *llmModelService) TestLLMModel(ctx context.Context, req *contract.TestLL
 		responseMessage = strings.TrimSpace(message.Content)
 	}
 	return &contract.TestLLMModelResponse{
-		Success:   true,
-		Message:   responseMessage,
-		Endpoint:  baseURL,
-		LatencyMS: latencyMS,
+		Success:      true,
+		Message:      responseMessage,
+		Endpoint:     endpointURL,
+		LatencyMS:    latencyMS,
+		BaseURLHasV1: baseURLHasV1,
 	}, nil
 }
 
@@ -367,24 +410,25 @@ func convertToContractLLMModel(model *types.LLMModel) *contract.LLMModel {
 		return nil
 	}
 	return &contract.LLMModel{
-		ID:          model.ID,
-		OrgID:       model.OrgID,
-		Code:        model.Code,
-		Name:        model.Name,
-		Description: model.Description,
-		Provider:    model.Provider,
-		Model:       model.ModelName,
-		BaseURL:     model.BaseURL,
-		APIKey:      model.APIKeyMasked,
-		MaxTokens:   model.MaxTokens,
-		Temperature: model.Temperature,
-		TimeoutSec:  model.TimeoutSec,
-		Status:      model.Status,
-		IsDefault:   model.IsDefault,
-		IsSystem:    model.IsSystem,
-		Config:      map[string]interface{}(model.Config),
-		CreatedAt:   model.CreatedAt,
-		UpdatedAt:   model.UpdatedAt,
+		ID:           model.ID,
+		OrgID:        model.OrgID,
+		Code:         model.Code,
+		Name:         model.Name,
+		Description:  model.Description,
+		Provider:     model.Provider,
+		Model:        model.ModelName,
+		BaseURL:      model.BaseURL,
+		BaseURLHasV1: model.BaseURLHasV1,
+		APIKey:       model.APIKeyMasked,
+		MaxTokens:    model.MaxTokens,
+		Temperature:  model.Temperature,
+		TimeoutSec:   model.TimeoutSec,
+		Status:       model.Status,
+		IsDefault:    model.IsDefault,
+		IsSystem:     model.IsSystem,
+		Config:       map[string]interface{}(model.Config),
+		CreatedAt:    model.CreatedAt,
+		UpdatedAt:    model.UpdatedAt,
 	}
 }
 
@@ -430,6 +474,91 @@ var llmEndpointSuffixes = []string{
 	"/api/chat",
 	":generateContent",
 	":streamGenerateContent",
+}
+
+// detectURLHasV1 检查原始输入URL中是否显式包含 /v1 路径段
+func detectURLHasV1(rawURL string) bool {
+	normalized := strings.TrimRight(strings.TrimSpace(rawURL), "/")
+
+	// Check if /v1 appears before a known endpoint suffix (excluding /v1 itself)
+	for _, suffix := range llmEndpointSuffixes {
+		if suffix == "/v1" {
+			continue
+		}
+		if strings.HasSuffix(normalized, suffix) {
+			withoutSuffix := strings.TrimSuffix(normalized, suffix)
+			return strings.HasSuffix(strings.TrimRight(withoutSuffix, "/"), "/v1")
+		}
+	}
+
+	// Check for trailing /v1 directly (includes bare /v1 or /v1 at the end)
+	normalized = strings.TrimSuffix(normalized, "/v1")
+	return normalized != strings.TrimRight(strings.TrimSpace(rawURL), "/")
+}
+
+// buildLLMEndpointURL 根据存储的根URL和BaseURLHasV1标志构建完整的API端点URL
+func buildLLMEndpointURL(baseURL string, hasV1 bool) string {
+	baseURL = strings.TrimRight(baseURL, "/")
+	if hasV1 {
+		return baseURL + "/v1"
+	}
+	return baseURL
+}
+
+// probeResult 记录连通性探测结果
+type probeResult struct {
+	v1Success   bool
+	noV1Success bool
+}
+
+// probeConnectivity 使用 httptest 风格的模拟对指定URL进行连通性探测
+// 实际场景中通过尝试创建 Eino ChatModel 来验证
+func probeConnectivity(ctx context.Context, provider, modelName, apiKey, baseURL string, preferV1 bool) *probeResult {
+	result := &probeResult{}
+	baseURL = normalizeLLMBaseURL(baseURL)
+
+	// Build candidate URLs
+	withV1URL := buildLLMEndpointURL(baseURL, true)
+	noV1URL := buildLLMEndpointURL(baseURL, false)
+
+	// Determine probing order: prefer the user-indicated candidate first
+	candidates := []struct {
+		url    string
+		result *bool
+	}{
+		{withV1URL, &result.v1Success},
+		{noV1URL, &result.noV1Success},
+	}
+	if !preferV1 {
+		candidates[0], candidates[1] = candidates[1], candidates[0]
+	}
+
+	for _, candidate := range candidates {
+		chatModel, err := agenteino.NewChatModel(ctx, &config.LLMConfig{
+			Provider: provider,
+			APIKey:   apiKey,
+			Model:    modelName,
+			BaseURL:  candidate.url,
+		})
+		if err != nil {
+			continue
+		}
+		flow, err := agenteino.NewFlow(ctx, &agenteino.FlowConfig{
+			Model:        chatModel,
+			SystemPrompt: "connectivity test",
+			MaxStep:      1,
+		})
+		if err != nil {
+			continue
+		}
+		_, err = flow.Generate(ctx, "ok")
+		if err == nil {
+			*candidate.result = true
+			return result
+		}
+	}
+
+	return result
 }
 
 func firstRunes(value string, count int) string {

@@ -3,9 +3,11 @@ package steps
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/insmtx/Leros/backend/internal/agent"
 	infradb "github.com/insmtx/Leros/backend/internal/infra/db"
+	"github.com/insmtx/Leros/backend/internal/worker/identity"
 	"github.com/insmtx/Leros/backend/types"
 	"gorm.io/gorm"
 )
@@ -82,11 +84,26 @@ func (r *DBModelResolver) ResolveModel(ctx context.Context, req *agent.RequestCo
 	resolved.Provider = model.Provider
 	resolved.Model = model.ModelName
 	resolved.APIKey = model.APIKeyEncrypted
-	resolved.BaseURL = model.BaseURL
+	resolved.BaseURL = workerModelProxyBaseURL()
 	if resolved.Temperature == 0 {
 		resolved.Temperature = model.Temperature
 	}
 	return &resolved, nil
+}
+
+func workerModelProxyBaseURL() string {
+	addr := strings.TrimSpace(identity.WorkerAddr())
+	if addr == "" {
+		return ""
+	}
+	addr = strings.TrimRight(addr, "/")
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return addr
+	}
+	if strings.HasPrefix(addr, ":") {
+		return "http://127.0.0.1" + addr
+	}
+	return "http://" + addr
 }
 
 // EnsureModelConfig 在需要时将解析后的模型配置应用到 req。

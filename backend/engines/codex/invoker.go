@@ -120,9 +120,10 @@ func (inv *Invoker) Run(ctx context.Context, req engines.RunRequest) (engines.Pr
 func codexModelEnv(model engines.ModelConfig) map[string]string {
 	baseURL := ensureV1Suffix(model.BaseURL)
 	return map[string]string{
-		"OPENAI_API_KEY":  model.APIKey,
-		"OPENAI_API_BASE": baseURL,
-		"OPENAI_BASE_URL": baseURL,
+		"CODEX_QUIET_MODE": "1",
+		"OPENAI_API_KEY":   model.APIKey,
+		"OPENAI_API_BASE":  baseURL,
+		"OPENAI_BASE_URL":  baseURL,
 	}
 }
 
@@ -290,6 +291,20 @@ func buildArgs(threadID string, resume bool, req engines.RunRequest) []string {
 	return append(args, "-", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox")
 }
 
+func lerosProviderConfigArgs(req engines.RunRequest) []string {
+	baseURL := ensureV1Suffix(firstNonEmptyString(
+		req.Model.BaseURL,
+		// os.Getenv("OPENAI_API_BASE"),
+		os.Getenv("OPENAI_BASE_URL"),
+	))
+	return []string{
+		"-c", `model_provider="leros"`,
+		"-c", `model_providers.leros.name="leros"`,
+		"-c", fmt.Sprintf(`model_providers.leros.base_url=%q`, baseURL),
+		"-c", `model_providers.leros.env_key="OPENAI_API_KEY"`,
+	}
+}
+
 // ensureV1Suffix appends /v1 when it is missing.
 func ensureV1Suffix(url string) string {
 	if url == "" {
@@ -299,21 +314,6 @@ func ensureV1Suffix(url string) string {
 		url = strings.TrimSuffix(url, "/") + "/v1"
 	}
 	return url
-}
-
-func lerosProviderConfigArgs(req engines.RunRequest) []string {
-	baseURL := ensureV1Suffix(firstNonEmptyString(
-		req.Model.BaseURL,
-		os.Getenv("OPENAI_API_BASE"),
-		os.Getenv("OPENAI_BASE_URL"),
-	))
-	return []string{
-		"-c", `model_provider="leros"`,
-		"-c", `model_providers.leros.name="leros"`,
-		"-c", fmt.Sprintf(`model_providers.leros.base_url=%q`, baseURL),
-		"-c", `model_providers.leros.env_key="OPENAI_API_KEY"`,
-		"-c", `model_providers.leros.wire_api="chat"`,
-	}
 }
 
 func firstNonEmptyString(values ...string) string {

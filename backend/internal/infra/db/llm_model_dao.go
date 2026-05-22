@@ -56,6 +56,23 @@ func GetDefaultLLMModel(ctx context.Context, db *gorm.DB, orgID uint) (*types.LL
 	return &entity, nil
 }
 
+// GetActiveLLMModelByName 按组织ID和模型名称查询active状态的模型
+// 多个匹配时按 is_default DESC, updated_at DESC 取第一条
+func GetActiveLLMModelByName(ctx context.Context, db *gorm.DB, orgID uint, modelName string) (*types.LLMModel, error) {
+	var entity types.LLMModel
+	err := db.WithContext(ctx).
+		Where("org_id = ? AND model = ? AND status = ?", orgID, modelName, string(types.LLMModelStatusActive)).
+		Order("is_default DESC, updated_at DESC").
+		First(&entity).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &entity, nil
+}
+
 // UpdateLLMModel 更新LLM模型配置
 func UpdateLLMModel(ctx context.Context, db *gorm.DB, model *types.LLMModel) error {
 	return db.WithContext(ctx).Save(model).Error
