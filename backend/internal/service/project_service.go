@@ -11,7 +11,6 @@ import (
 	"github.com/insmtx/Leros/backend/internal/api/contract"
 	"github.com/insmtx/Leros/backend/internal/infra/db"
 	"github.com/insmtx/Leros/backend/types"
-	"github.com/ygpkg/yg-go/apis/apiobj"
 	"github.com/ygpkg/yg-go/encryptor/snowflake"
 )
 
@@ -176,20 +175,22 @@ func (s *projectService) ListProjects(ctx context.Context, req *contract.ListPro
 	}
 	req.Fill()
 
-	opt := &apiobj.PageQuery{
+	opt := &db.ProjectQuery{
+		OrgID:   caller.OrgID,
+		Uin:     caller.Uin,
 		Offset:  req.Offset,
 		Limit:   req.Limit,
 		ListAll: req.ListAll,
 	}
 	if req.Keyword != nil && *req.Keyword != "" {
-		opt.Filters = append(opt.Filters, apiobj.Filter{Field: "name", Value: []string{*req.Keyword}})
+		opt.Filters = append(opt.Filters, db.Filter{Field: "name", Value: []string{*req.Keyword}})
 	}
 	if req.Status != nil && *req.Status != "" {
-		opt.Filters = append(opt.Filters, apiobj.Filter{Field: "status", Value: []string{*req.Status}})
+		opt.Filters = append(opt.Filters, db.Filter{Field: "status", Value: []string{*req.Status}})
 	}
 
 	var ret db.ListProjectsResponse
-	if err := db.ListProjects(ctx, s.db, caller.OrgID, opt, &ret); err != nil {
+	if err := db.ListProjects(ctx, s.db, opt, &ret); err != nil {
 		return nil, err
 	}
 

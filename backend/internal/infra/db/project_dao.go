@@ -8,11 +8,28 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/ygpkg/yg-go/apis/apiobj"
 	"github.com/ygpkg/yg-go/logs"
 
 	"github.com/insmtx/Leros/backend/types"
 )
+
+// ProjectQuery 项目列表查询参数
+type ProjectQuery struct {
+	Filters []Filter
+	OrderBy []string
+	OrgID   uint
+	Uin     uint
+	Offset  int
+	Limit   int
+	ListAll bool
+}
+
+// Filter 过滤条件
+type Filter struct {
+	Field      string
+	Value      []string
+	ExactMatch bool
+}
 
 // CreateProject 创建项目
 func CreateProject(ctx context.Context, db *gorm.DB, project *types.Project) error {
@@ -50,10 +67,10 @@ type ListProjectsResponse struct {
 	Items  []*types.Project `json:"items"`
 }
 
-// ListProjects 查询项目列表，使用 apiobj.PageQuery 作为查询参数
-func ListProjects(ctx context.Context, d *gorm.DB, orgID uint, opt *apiobj.PageQuery, ret *ListProjectsResponse) error {
+// ListProjects 查询项目列表，使用 ProjectQuery 作为查询参数
+func ListProjects(ctx context.Context, d *gorm.DB, opt *ProjectQuery, ret *ListProjectsResponse) error {
 	query := d.WithContext(ctx).Table(types.TableNameProject).
-		Where("org_id = ? AND deleted_at IS NULL", orgID)
+		Where("org_id = ? AND deleted_at IS NULL", opt.OrgID)
 
 	for _, filter := range opt.Filters {
 		switch filter.Field {
@@ -96,7 +113,7 @@ func ListProjects(ctx context.Context, d *gorm.DB, orgID uint, opt *apiobj.PageQ
 	if !opt.ListAll && opt.Limit > 0 {
 		query = query.Limit(opt.Limit)
 	} else {
-		query = query.Limit(apiobj.PageMaxCount)
+		query = query.Limit(150)
 	}
 
 	err := query.Find(&ret.Items).Error
