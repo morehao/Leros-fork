@@ -187,16 +187,12 @@ func (s *digitalAssistantService) DeleteDigitalAssistant(ctx context.Context, id
 }
 
 func (s *digitalAssistantService) ListDigitalAssistant(ctx context.Context, req *contract.ListDigitalAssistantRequest) (*contract.DigitalAssistantList, error) {
-	orgID, err := getOrgIDFromContext(ctx)
+	caller, err := getCallerFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	opt := &types.PageQuery{
-		OrgID:  orgID,
-		Offset: req.Offset,
-		Limit:  req.Limit,
-	}
+	opt := types.NewPageQuery(*caller, req.Offset, req.Limit)
 	if req.Status != nil {
 		opt.Filters = append(opt.Filters, types.Filter{Field: "status", Value: []string{*req.Status}})
 	}

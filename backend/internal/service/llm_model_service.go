@@ -219,11 +219,7 @@ func (s *llmModelService) ListLLMModels(ctx context.Context, req *contract.ListL
 		return nil, err
 	}
 
-	opt := &types.PageQuery{
-		OrgID:  caller.OrgID,
-		Offset: req.Offset,
-		Limit:  req.Limit,
-	}
+	opt := types.NewPageQuery(*caller, req.Offset, req.Limit)
 	if req.Provider != nil && *req.Provider != "" {
 		opt.Filters = append(opt.Filters, types.Filter{Field: "provider", Value: []string{*req.Provider}})
 	}

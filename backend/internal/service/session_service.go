@@ -148,27 +148,18 @@ func (s *sessionService) DeleteSession(ctx context.Context, sessionID string) er
 func (s *sessionService) ListSessions(ctx context.Context, req *contract.ListSessionsRequest) (*contract.SessionList, error) {
 	caller, _ := auth.FromContext(ctx)
 
-	var uin *uint
-	var orgID *uint
-	if caller != nil && caller.Uin > 0 {
-		uin = &caller.Uin
-		orgID = &caller.OrgID
+	var pqCaller types.Caller
+	if caller != nil {
+		pqCaller = *caller
 	}
 
 	sessionType := (*types.SessionType)(req.Type)
-	opt := &types.PageQuery{
-		OrgID:  *orgID,
-		Offset: req.Offset,
-		Limit:  req.Limit,
-	}
+	opt := types.NewPageQuery(pqCaller, req.Offset, req.Limit)
 	if sessionType != nil && *sessionType != "" {
 		opt.Filters = append(opt.Filters, types.Filter{Field: "type", Value: []string{string(*sessionType)}, ExactMatch: true})
 	}
 	if req.Status != nil && *req.Status != "" {
 		opt.Filters = append(opt.Filters, types.Filter{Field: "status", Value: []string{*req.Status}})
-	}
-	if uin != nil && *uin > 0 {
-		opt.Uin = *uin
 	}
 	if req.AssistantID != nil && *req.AssistantID > 0 {
 		opt.Filters = append(opt.Filters, types.Filter{Field: "assistant_id", Value: []string{fmt.Sprintf("%d", *req.AssistantID)}})

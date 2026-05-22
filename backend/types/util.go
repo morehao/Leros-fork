@@ -66,13 +66,10 @@ func (p *Pagination) Fill() {
 
 // PageQuery 通用分页查询参数
 type PageQuery struct {
-	Filters []Filter
-	OrderBy []string
-	OrgID   uint
-	Uin     uint
-	Offset  int
-	Limit   int
-	ListAll bool
+	Filters    []Filter `json:"filters,omitempty"`
+	OrderBy    []string `json:"order_by,omitempty"`
+	Caller     `json:"-"`
+	Pagination `json:",inline"`
 }
 
 // Filter 过滤条件
@@ -80,4 +77,12 @@ type Filter struct {
 	Field      string   `json:"field"`
 	Value      []string `json:"value"`
 	ExactMatch bool     `json:"exact_match"`
+}
+
+// NewPageQuery 快速创建 PageQuery，接受 Caller 和分页参数。
+func NewPageQuery(caller Caller, offset, limit int) *PageQuery {
+	return &PageQuery{
+		Caller:     caller,
+		Pagination: Pagination{Offset: offset, Limit: limit},
+	}
 }
