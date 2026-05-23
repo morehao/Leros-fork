@@ -321,7 +321,11 @@ const _initialState: LayoutState = {
 		{
 			id: "ai-teammates",
 			label: "AI 队友",
-			items: [{ id: "ai-1", label: "AI 1", icon: "IconAITeammate" }],
+			items: [
+				{ id: "ai-1", label: "Ada AI", icon: "IconAITeammate", badge: 1 },
+				{ id: "ai-2", label: "Hopper", icon: "IconAITeammate" },
+				{ id: "ai-3", label: "Mia", icon: "IconAITeammate" },
+			],
 		},
 	],
 	collapsedNavGroups: new Set(),

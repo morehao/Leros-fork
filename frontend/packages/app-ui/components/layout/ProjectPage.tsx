@@ -39,34 +39,40 @@ export function ProjectPage() {
 
 	return (
 		<div data-slot="project-page" className="flex h-full flex-1 flex-col bg-white">
-			<header className="flex h-[78px] shrink-0 items-center justify-between border-b border-slate-200 bg-[#f8f9fe] px-8">
+			<header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-[#f8f9fe] px-10">
 				<div className="flex items-center gap-3 text-slate-500">
 					<button
 						type="button"
 						onClick={() => switchView("workbench")}
-						className="text-sm font-medium hover:text-slate-800"
+						className="text-xs font-semibold hover:text-slate-800 uppercase tracking-widest"
 					>
 						Projects
 					</button>
-					<span>›</span>
-					<h1 className="text-2xl font-bold text-slate-950">{project.name}</h1>
+					<span className="text-slate-300">/</span>
+					<h1 className="text-base font-bold text-slate-900">{project.name}</h1>
 				</div>
-				<div className="flex items-center gap-8 text-slate-600">
-					<Search className="size-6" />
-					<LayoutPanelLeft className="size-6" />
-					<Settings className="size-6" />
+				<div className="flex items-center gap-6 text-slate-600">
+					<button type="button" className="p-1.5 hover:bg-slate-200/50 rounded-full transition-colors">
+						<Search className="size-5" />
+					</button>
+					<button type="button" className="p-1.5 hover:bg-slate-200/50 rounded-full transition-colors">
+						<LayoutPanelLeft className="size-5" />
+					</button>
+					<button type="button" className="p-1.5 hover:bg-slate-200/50 rounded-full transition-colors">
+						<Settings className="size-5" />
+					</button>
 				</div>
 			</header>
 
-			<nav className="flex h-[64px] shrink-0 items-end gap-10 border-b border-slate-200 bg-[#f8f9fe] px-8">
+			<nav className="flex h-[48px] shrink-0 items-end gap-8 border-b border-slate-200 bg-[#f8f9fe] px-10">
 				{projectTabs.map((tab) => (
 					<button
 						key={tab.id}
 						type="button"
 						onClick={() => setActiveProjectTab(tab.id)}
 						className={cn(
-							"relative h-full px-1 text-base font-medium transition-colors",
-							activeProjectTab === tab.id ? "text-blue-600" : "text-slate-600 hover:text-slate-950",
+							"relative h-full pb-2 px-1 text-sm font-semibold transition-colors",
+							activeProjectTab === tab.id ? "text-blue-600" : "text-slate-500 hover:text-slate-950",
 						)}
 					>
 						{tab.label}
@@ -83,7 +89,7 @@ export function ProjectPage() {
 						"min-w-0 flex-1",
 						activeProjectTab === "chat"
 							? "flex min-h-0 flex-col bg-white"
-							: "overflow-y-auto px-8 py-8",
+							: "overflow-y-auto px-10 py-8",
 					)}
 				>
 					{activeProjectTab === "chat" && <ProjectChat />}
@@ -92,11 +98,11 @@ export function ProjectPage() {
 					{activeProjectTab === "memory" && <ProjectMemories project={project} />}
 				</main>
 
-				<aside className="flex w-[360px] shrink-0 flex-col border-l border-slate-200 bg-[#f8f9fe] px-7 py-8">
+				<aside className="flex w-[280px] shrink-0 flex-col border-l border-slate-200/60 bg-[#f4f7fd]/30 px-6 py-6">
 					<div className="min-h-0 flex-1 space-y-8 overflow-y-auto">
 						<section>
 							<div className="mb-4 flex items-center justify-between">
-								<h2 className="text-sm font-semibold tracking-wide text-slate-600">任务</h2>
+								<h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">任务</h2>
 								<span className="rounded bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
 									{project.tasks.length} 项
 								</span>
@@ -106,7 +112,7 @@ export function ProjectPage() {
 
 						<section>
 							<div className="mb-4 flex items-center justify-between">
-								<h2 className="text-sm font-semibold tracking-wide text-slate-600">产物</h2>
+								<h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">产物</h2>
 								<span className="rounded bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600">
 									{project.artifacts.length} 个
 								</span>

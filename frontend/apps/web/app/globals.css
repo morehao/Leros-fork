@@ -50,7 +50,7 @@
 	--leros-radius-sm: 8px;
 	--leros-radius-md: 12px;
 	--leros-radius-lg: 16px;
-	--leros-sidebar-width: 320px;
+	--leros-sidebar-width: 240px;
 	--leros-shadow-menu: 0 18px 45px rgba(30, 41, 59, 0.16);
 }
 
@@ -77,30 +77,32 @@
 		height: 100%;
 		flex-shrink: 0;
 		flex-direction: column;
-		border-right: 1px solid var(--leros-sidebar-border);
-		background: var(--leros-sidebar-bg);
+		overflow: hidden;
+		border-right: 1px solid rgba(194, 198, 216, 0.6); /* border-outline-variant */
+		background: #f4f7fd; /* f4f7fd design bg */
 		color: var(--leros-text);
+		padding: 24px 0; /* py-6 */
 	}
 
 	.leros-brand {
 		display: flex;
-		min-height: 108px;
-		align-items: flex-start;
-		gap: 14px;
-		padding: 28px 30px 20px;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0 24px; /* px-6 */
+		margin-bottom: 40px; /* mb-10 */
 	}
 
 	.leros-logo-placeholder {
 		display: flex;
-		width: 40px;
-		height: 40px;
+		width: 40px; /* w-10 */
+		height: 40px; /* h-10 */
 		flex-shrink: 0;
 		align-items: center;
 		justify-content: center;
-		border-radius: var(--leros-radius-sm);
-		background: transparent;
+		border-radius: 12px; /* rounded-xl */
+		background: #0050cb; /* primary */
 		color: #ffffff;
-		box-shadow: none;
+		box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05); /* shadow-sm */
 	}
 
 	.leros-logo-image {
@@ -120,49 +122,51 @@
 	}
 
 	.leros-brand-title {
-		font-size: 25px;
-		font-weight: 750;
-		line-height: 1.08;
+		font-size: 18px; /* text-[18px] */
+		font-weight: 700; /* font-bold */
+		line-height: 1.25;
 		color: var(--leros-text-strong);
 	}
 
 	.leros-brand-version {
-		margin-top: 4px;
-		font-size: 12px;
+		margin-top: 2px;
+		font-size: 10px; /* text-[10px] */
 		line-height: 1;
-		color: var(--leros-text-muted);
+		font-weight: 500;
+		color: rgba(66, 70, 86, 0.7); /* text-on-surface-variant/70 */
 	}
 
 	.leros-nav {
-		padding: 0 20px 24px;
+		padding: 0 16px; /* px-4 */
 	}
 
 	.leros-nav-section {
-		margin-bottom: 28px;
+		margin-bottom: 32px; /* space-y-8 */
 	}
 
 	.leros-nav-section-label {
-		margin-bottom: 10px;
-		padding: 0 10px;
-		font-size: 13px;
+		margin-bottom: 12px; /* mb-3 */
+		padding: 0 12px; /* px-3 */
+		font-size: 11px; /* text-[11px] */
 		font-weight: 700;
 		line-height: 1;
-		color: var(--leros-text-subtle);
+		text-transform: uppercase;
+		letter-spacing: 0.1em; /* tracking-widest */
+		color: rgba(114, 118, 135, 0.6); /* text-outline/60 */
 	}
 
 	.leros-nav-item {
 		display: flex;
 		width: 100%;
-		min-height: 50px;
 		cursor: pointer;
 		align-items: center;
-		gap: 14px;
-		border-radius: var(--leros-radius-sm);
-		padding: 0 12px;
+		gap: 12px; /* gap-3 */
+		border-radius: 8px; /* rounded-lg */
+		padding: 8px 12px; /* px-3 py-2 */
 		text-align: left;
-		font-size: 18px;
-		font-weight: 650;
-		color: var(--leros-text);
+		font-size: 14px; /* text-body-md */
+		font-weight: 500;
+		color: rgba(66, 70, 86, 0.9); /* text-on-surface-variant */
 		transition:
 			background 160ms ease,
 			color 160ms ease,
@@ -170,19 +174,20 @@
 	}
 
 	.leros-nav-item:hover {
-		background: rgba(255, 255, 255, 0.54);
+		background: rgba(66, 70, 86, 0.08); /* hover:bg-surface-variant/50 */
 		color: var(--leros-text-strong);
 	}
 
 	.leros-nav-item[data-active="true"] {
-		background: var(--leros-primary-soft);
-		color: var(--leros-primary);
+		background: rgba(0, 80, 203, 0.08); /* nav-item-active bg */
+		color: #0050cb; /* nav-item-active color */
+		font-weight: 600;
 	}
 
 	.leros-nav-icon {
 		display: flex;
-		width: 26px;
-		height: 26px;
+		width: 20px; /* size-5 */
+		height: 20px;
 		flex-shrink: 0;
 		align-items: center;
 		justify-content: center;
@@ -190,38 +195,38 @@
 	}
 
 	.leros-nav-icon-text {
-		font-size: 18px;
+		font-size: 14px;
 		font-weight: 700;
 	}
 
 	.leros-ai-token {
 		display: inline-flex;
-		min-width: 30px;
-		height: 30px;
+		min-width: 24px;
+		height: 24px;
 		align-items: center;
 		justify-content: center;
 		border-radius: 999px;
 		background: #dce5fb;
 		color: #3f4c63;
-		font-size: 13px;
+		font-size: 11px;
 		font-weight: 700;
 	}
 
 	.leros-sidebar-footer {
-		border-top: 1px solid var(--leros-sidebar-border);
-		padding: 16px 28px 18px;
+		border-top: 1px solid rgba(194, 198, 216, 0.3); /* border-outline-variant/30 */
+		padding: 16px 8px 0; /* px-2 pt-4 border-t mt-auto */
+		margin-top: auto;
 	}
 
 	.leros-profile-trigger {
 		display: flex;
 		width: 100%;
-		height: 42px;
 		cursor: pointer;
 		align-items: center;
 		gap: 12px;
-		border-radius: var(--leros-radius-sm);
+		border-radius: 12px; /* rounded-xl */
 		background: transparent;
-		padding: 0;
+		padding: 12px; /* px-3 py-3 */
 		color: var(--leros-text-strong);
 		font-size: 14px;
 		box-shadow: none;
@@ -233,7 +238,7 @@
 	.leros-profile-trigger:hover,
 	.leros-profile-trigger:focus-visible,
 	.leros-profile-trigger[aria-expanded="true"] {
-		background: rgba(255, 255, 255, 0.5);
+		background: rgba(66, 70, 86, 0.08); /* hover:bg-surface-variant/30 */
 		color: var(--leros-text-strong);
 		box-shadow: none;
 		outline: none;
@@ -241,14 +246,15 @@
 
 	.leros-avatar {
 		display: flex;
-		width: 30px;
-		height: 30px;
+		width: 40px; /* w-10 */
+		height: 40px; /* h-10 */
 		flex-shrink: 0;
 		align-items: center;
 		justify-content: center;
 		border-radius: 999px;
-		background: linear-gradient(145deg, #172033 0%, #31415d 100%);
-		color: #ffffff;
+		background: #dce2f7;
+		color: #141b2b;
+		border: 1px solid rgba(194, 198, 216, 0.5); /* border-outline-variant/50 */
 	}
 
 	.leros-profile-menu {
