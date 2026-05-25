@@ -58,7 +58,6 @@ export type Project = {
 	name: string;
 	description: string;
 	updatedAt: number;
-	_backendId?: number;
 	messages: ProjectMessage[];
 	tasks: ProjectTask[];
 	artifacts: ProjectArtifact[];
@@ -127,7 +126,6 @@ function mapSessionToConversation(s: BackendSession): Conversation {
 function mapBackendProject(bp: BackendProject): Project {
 	return {
 		id: bp.public_id,
-		_backendId: bp.id,
 		name: bp.name,
 		description: bp.description ?? "",
 		updatedAt: new Date(bp.updated_at).getTime(),
@@ -246,7 +244,6 @@ export class LayoutActionImpl {
 	selectWorkbenchProject = (projectId: string | null) => {
 		this.#set({ activeProjectId: projectId, activeWorkbenchTaskId: null });
 		if (projectId) {
-			console.log("[selectWorkbenchProject] projectId:", projectId, "projects:", this.#get().projects.map(p => ({ id: p.id, name: p.name, _backendId: p._backendId })));
 			this.fetchTasks(projectId);
 		}
 	};
@@ -350,20 +347,20 @@ export class LayoutActionImpl {
 		trimmed: string,
 	) => {
 		try {
-			let backendProjectId: number | null = targetProject?._backendId ?? null;
+			let projectId = targetProject?.id ?? null;
 			let publicId: string | null = null;
 
-			if (!backendProjectId) {
+			if (!projectId) {
 				const name = targetProject?.name ?? createProjectName(trimmed, this.#get().projects.length + 1);
 				const projectRes = await projectApi.create({ name });
 				const bp = projectRes.data.data;
 				if (!bp) throw new Error("Failed to create project");
-				backendProjectId = bp.id;
+				projectId = bp.public_id;
 				publicId = bp.public_id;
 			}
 
 			const taskRes = await taskApi.create({
-				project_id: backendProjectId,
+				project_id: projectId,
 				title: createTaskTitle(trimmed),
 			});
 			const bt = taskRes.data.data;
@@ -375,7 +372,7 @@ export class LayoutActionImpl {
 					p.id === targetProjectId
 						? {
 								...p,
-								...(publicId ? { id: publicId, _backendId: backendProjectId } : {}),
+								...(publicId ? { id: publicId } : {}),
 								tasks: p.tasks.map((t) =>
 									t.id === localTaskId ? backendTask : t,
 								),
@@ -393,16 +390,13 @@ export class LayoutActionImpl {
 		try {
 			const res = await projectApi.list({ list_all: true, limit: 100 });
 			const items = res.data.data?.items ?? [];
-			console.log("[fetchProjects] raw res.data:", JSON.stringify(res.data));
-			console.log("[fetchProjects] items count:", items.length, "first item keys:", items[0] ? Object.keys(items[0]) : "none");
 			if (items.length === 0) return;
 			const apiProjects = items.map(mapBackendProject);
-			console.log("[fetchProjects] mapped projects:", apiProjects.map(p => ({ id: p.id, name: p.name, _backendId: p._backendId })));
 			this.#set((state) => {
-				const localProjects = state.projects.filter((p) => !p._backendId);
-				const existingIds = new Set(apiProjects.map((p) => p.id));
-				const uniqueLocal = localProjects.filter((p) => !existingIds.has(p.id));
-				return { projects: [...apiProjects, ...uniqueLocal] };
+				const localProjects = state.projects.filter((p) =>
+					!apiProjects.some((ap) => ap.id === p.id),
+				);
+				return { projects: [...apiProjects, ...localProjects] };
 			});
 		} catch (err) {
 			console.error("fetchProjects error:", err);
@@ -461,26 +455,12 @@ export class LayoutActionImpl {
 	};
 
 	fetchTasks = async (projectId: string) => {
-		let project = this.#get().projects.find((p) => p.id === projectId);
-		console.log("[fetchTasks] start, projectId:", projectId, "found:", !!project, "_backendId:", project?._backendId);
+		const project = this.#get().projects.find((p) => p.id === projectId);
 		if (!project) return;
 
-		if (!project._backendId) {
-			console.log("[fetchTasks] no _backendId, calling fetchProjects...");
-			await this.fetchProjects();
-			project = this.#get().projects.find((p) => p.id === projectId);
-			console.log("[fetchTasks] after fetchProjects, found:", !!project, "_backendId:", project?._backendId);
-		}
-		if (!project?._backendId) {
-			console.warn("[fetchTasks] still no _backendId, aborting");
-			return;
-		}
-
 		try {
-			console.log("[fetchTasks] calling taskApi.list with project_id:", project._backendId);
-			const res = await taskApi.list({ project_id: project._backendId, list_all: true, limit: 100 });
+			const res = await taskApi.list({ project_id: projectId, list_all: true, limit: 100 });
 			const items = res.data.data?.items ?? [];
-			console.log("[fetchTasks] got", items.length, "tasks");
 			this.#set((s) => ({
 				projects: s.projects.map((p) =>
 					p.id === projectId
@@ -503,10 +483,10 @@ export class LayoutActionImpl {
 	}) => {
 		const state = this.#get();
 		const project = state.projects.find((p) => p.id === projectId);
-		if (!project || !project._backendId) return null;
+		if (!project) return null;
 
 		try {
-			const res = await taskApi.create({ project_id: project._backendId, ...params });
+			const res = await taskApi.create({ project_id: projectId, ...params });
 			const bt = res.data.data;
 			if (!bt) throw new Error("No data returned");
 			const item = mapBackendTask(bt);
