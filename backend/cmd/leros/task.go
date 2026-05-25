@@ -19,7 +19,7 @@ var (
 	taskJSON       bool
 	taskKeyword    string
 	taskStatus     string
-	taskProjectID  uint
+	taskProjectID  string
 	taskType       string
 	taskAssigneeID uint
 	taskOffset     int
@@ -90,9 +90,8 @@ func printTasks(list *contract.TaskList) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "PUBLIC_ID\tTITLE\tSTATUS\tTYPE\tPROJECT_ID\tCREATED_AT")
 	for _, t := range list.Items {
-		projectID := fmt.Sprintf("%d", t.ProjectID)
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			t.PublicID, t.Title, t.Status, t.TaskType, projectID,
+			t.PublicID, t.Title, t.Status, t.TaskType, t.ProjectID,
 			t.CreatedAt.Format("2006-01-02T15:04:05Z"))
 	}
 	w.Flush()
@@ -105,7 +104,7 @@ func init() {
 	taskLsCmd.Flags().BoolVar(&taskJSON, "json", false, "Output in JSON format")
 	taskLsCmd.Flags().StringVar(&taskKeyword, "keyword", "", "Filter by title/description keyword")
 	taskLsCmd.Flags().StringVar(&taskStatus, "status", "", "Filter by status")
-	taskLsCmd.Flags().UintVar(&taskProjectID, "project-id", 0, "Filter by project ID")
+	taskLsCmd.Flags().StringVar(&taskProjectID, "project-id", "", "Filter by project ID")
 	taskLsCmd.Flags().StringVar(&taskType, "type", "", "Filter by task type")
 	taskLsCmd.Flags().UintVar(&taskAssigneeID, "assignee-id", 0, "Filter by assignee ID")
 	taskLsCmd.Flags().IntVar(&taskOffset, "offset", 0, "Pagination offset")

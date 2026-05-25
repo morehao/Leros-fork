@@ -11,7 +11,7 @@ type Task struct {
 	PublicID    string                 `json:"public_id"`
 	OrgID       uint                   `json:"org_id"`
 	OwnerID     uint                   `json:"owner_id"`
-	ProjectID   uint                   `json:"project_id"`
+	ProjectID   string                 `json:"project_id"`
 	SessionID   *uint                  `json:"session_id,omitempty"`
 	TaskType    string                 `json:"task_type"`
 	AssigneeID  *uint                  `json:"assignee_id,omitempty"`
@@ -26,7 +26,7 @@ type Task struct {
 
 // CreateTaskRequest 创建任务请求
 type CreateTaskRequest struct {
-	ProjectID   uint                   `json:"project_id" binding:"required"`
+	ProjectID   string                 `json:"project_id" binding:"required"`
 	Title       string                 `json:"title" binding:"required"`
 	Description string                 `json:"description,omitempty"`
 	TaskType    *string                `json:"task_type,omitempty"`
@@ -37,7 +37,7 @@ type CreateTaskRequest struct {
 
 // UpdateTaskRequest 更新任务请求
 type UpdateTaskRequest struct {
-	ProjectID   *uint                   `json:"project_id,omitempty"`
+	ProjectID   *string                 `json:"project_id,omitempty"`
 	Title       *string                 `json:"title,omitempty"`
 	Description *string                 `json:"description,omitempty"`
 	TaskType    *string                 `json:"task_type,omitempty"`
@@ -51,7 +51,7 @@ type UpdateTaskRequest struct {
 type ListTasksRequest struct {
 	Keyword    *string `json:"keyword,omitempty"`
 	Status     *string `json:"status,omitempty"`
-	ProjectID  *uint   `json:"project_id,omitempty"`
+	ProjectID  *string `json:"project_id,omitempty"`
 	TaskType   *string `json:"task_type,omitempty"`
 	AssigneeID *uint   `json:"assignee_id,omitempty"`
 	types.Pagination

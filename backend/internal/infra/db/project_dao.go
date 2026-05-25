@@ -40,6 +40,19 @@ func DeleteProject(ctx context.Context, db *gorm.DB, id uint) error {
 	return db.WithContext(ctx).Delete(&types.Project{}, id).Error
 }
 
+// GetProjectsByIDs 根据项目ID列表批量获取项目
+func GetProjectsByIDs(ctx context.Context, db *gorm.DB, ids []uint) ([]*types.Project, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var entities []*types.Project
+	err := db.WithContext(ctx).Where("id IN (?)", ids).Find(&entities).Error
+	if err != nil {
+		return nil, err
+	}
+	return entities, nil
+}
+
 // CreateProjectMember 创建项目成员
 func CreateProjectMember(ctx context.Context, db *gorm.DB, member *types.ProjectMember) error {
 	return db.WithContext(ctx).Create(member).Error

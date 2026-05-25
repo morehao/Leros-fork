@@ -33,12 +33,12 @@ func (s *taskService) CreateTask(ctx context.Context, req *contract.CreateTaskRe
 		return nil, errors.New("title is required")
 	}
 
-	var p types.Project
-	if err := s.db.WithContext(ctx).Where("id = ? AND org_id = ?", req.ProjectID, caller.OrgID).First(&p).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("project not found")
-		}
+	project, err := db.GetProjectByPublicID(ctx, s.db, caller.OrgID, req.ProjectID)
+	if err != nil {
 		return nil, err
+	}
+	if project == nil {
+		return nil, errors.New("project not found")
 	}
 
 	publicID := generateTaskPublicID()
@@ -52,7 +52,7 @@ func (s *taskService) CreateTask(ctx context.Context, req *contract.CreateTaskRe
 		OrgID:       caller.OrgID,
 		PublicID:    publicID,
 		OwnerID:     caller.Uin,
-		ProjectID:   req.ProjectID,
+		ProjectID:   project.ID,
 		TaskType:    types.TaskType(taskType),
 		AssigneeID:  req.AssigneeID,
 		Title:       strings.TrimSpace(req.Title),
@@ -80,7 +80,7 @@ func (s *taskService) CreateTask(ctx context.Context, req *contract.CreateTaskRe
 	if err := db.CreateTask(ctx, s.db, task); err != nil {
 		return nil, err
 	}
-	return convertToContractTask(task), nil
+	return convertToContractTask(task, project.PublicID), nil
 }
 
 func (s *taskService) GetTask(ctx context.Context, publicID string) (*contract.Task, error) {
@@ -99,7 +99,12 @@ func (s *taskService) GetTask(ctx context.Context, publicID string) (*contract.T
 	if task == nil {
 		return nil, errors.New("task not found")
 	}
-	return convertToContractTask(task), nil
+
+	projectPublicID, err := s.resolveProjectPublicID(ctx, task.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	return convertToContractTask(task, projectPublicID), nil
 }
 
 func (s *taskService) UpdateTask(ctx context.Context, publicID string, req *contract.UpdateTaskRequest) (*contract.Task, error) {
@@ -143,14 +148,14 @@ func (s *taskService) UpdateTask(ctx context.Context, publicID string, req *cont
 			task.Deadline = req.Deadline
 		}
 		if req.ProjectID != nil {
-			var p types.Project
-			if err := tx.Where("id = ? AND org_id = ?", *req.ProjectID, caller.OrgID).First(&p).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return errors.New("project not found")
-				}
-				return err
+			project, dbErr := db.GetProjectByPublicID(ctx, tx, caller.OrgID, *req.ProjectID)
+			if dbErr != nil {
+				return dbErr
 			}
-			task.ProjectID = *req.ProjectID
+			if project == nil {
+				return errors.New("project not found")
+			}
+			task.ProjectID = project.ID
 		}
 		if req.Metadata != nil {
 			if *req.Metadata != nil {
@@ -176,7 +181,12 @@ func (s *taskService) UpdateTask(ctx context.Context, publicID string, req *cont
 	}); err != nil {
 		return nil, err
 	}
-	return convertToContractTask(task), nil
+
+	projectPublicID, err := s.resolveProjectPublicID(ctx, task.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	return convertToContractTask(task, projectPublicID), nil
 }
 
 func (s *taskService) DeleteTask(ctx context.Context, publicID string) error {
@@ -215,8 +225,15 @@ func (s *taskService) ListTasks(ctx context.Context, req *contract.ListTasksRequ
 	if req.Status != nil && *req.Status != "" {
 		opt.AddFilter("status", *req.Status)
 	}
-	if req.ProjectID != nil {
-		opt.AddExactFilter("project_id", fmt.Sprintf("%d", *req.ProjectID))
+	if req.ProjectID != nil && *req.ProjectID != "" {
+		project, dbErr := db.GetProjectByPublicID(ctx, s.db, caller.OrgID, *req.ProjectID)
+		if dbErr != nil {
+			return nil, dbErr
+		}
+		if project == nil {
+			return nil, errors.New("project not found")
+		}
+		opt.AddExactFilter("project_id", fmt.Sprintf("%d", project.ID))
 	}
 	if req.TaskType != nil && *req.TaskType != "" {
 		opt.AddFilter("task_type", *req.TaskType)
@@ -230,9 +247,22 @@ func (s *taskService) ListTasks(ctx context.Context, req *contract.ListTasksRequ
 		return nil, err
 	}
 
+	projectIDs := make([]uint, 0, len(tasks))
+	projectIDSet := make(map[uint]struct{})
+	for _, t := range tasks {
+		if _, ok := projectIDSet[t.ProjectID]; !ok {
+			projectIDSet[t.ProjectID] = struct{}{}
+			projectIDs = append(projectIDs, t.ProjectID)
+		}
+	}
+	projectPublicIDMap, err := s.resolveProjectPublicIDs(ctx, projectIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	items := make([]contract.Task, 0, len(tasks))
 	for _, task := range tasks {
-		items = append(items, *convertToContractTask(task))
+		items = append(items, *convertToContractTask(task, projectPublicIDMap[task.ProjectID]))
 	}
 	return &contract.TaskList{
 		Total:  total,
@@ -242,7 +272,7 @@ func (s *taskService) ListTasks(ctx context.Context, req *contract.ListTasksRequ
 	}, nil
 }
 
-func convertToContractTask(task *types.Task) *contract.Task {
+func convertToContractTask(task *types.Task, projectPublicID string) *contract.Task {
 	if task == nil {
 		return nil
 	}
@@ -266,7 +296,7 @@ func convertToContractTask(task *types.Task) *contract.Task {
 		PublicID:    task.PublicID,
 		OrgID:       task.OrgID,
 		OwnerID:     task.OwnerID,
-		ProjectID:   task.ProjectID,
+		ProjectID:   projectPublicID,
 		SessionID:   task.SessionID,
 		TaskType:    string(task.TaskType),
 		AssigneeID:  task.AssigneeID,
@@ -282,6 +312,30 @@ func convertToContractTask(task *types.Task) *contract.Task {
 
 func generateTaskPublicID() string {
 	return fmt.Sprintf("task_%s", snowflake.GenerateIDBase58())
+}
+
+func (s *taskService) resolveProjectPublicID(ctx context.Context, projectID uint) (string, error) {
+	projectIDs := []uint{projectID}
+	publicIDs, err := s.resolveProjectPublicIDs(ctx, projectIDs)
+	if err != nil {
+		return "", err
+	}
+	return publicIDs[projectID], nil
+}
+
+func (s *taskService) resolveProjectPublicIDs(ctx context.Context, projectIDs []uint) (map[uint]string, error) {
+	result := make(map[uint]string)
+	if len(projectIDs) == 0 {
+		return result, nil
+	}
+	projects, err := db.GetProjectsByIDs(ctx, s.db, projectIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range projects {
+		result[p.ID] = p.PublicID
+	}
+	return result, nil
 }
 
 var _ contract.TaskService = (*taskService)(nil)
