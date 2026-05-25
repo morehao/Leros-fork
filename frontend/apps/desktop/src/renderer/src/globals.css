@@ -1,3 +1,3 @@
-@import "@leros/app-ui/styles/globals.css";
+@import "@leros/styles/globals.css";
 
 @source "./**/*.{ts,tsx}";

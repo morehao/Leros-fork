@@ -10,7 +10,7 @@ declare const process:
 	  }
 	| undefined;
 
-const DEFAULT_API_BASE_URL = "http://localhost:8080/v1";
+const DEFAULT_API_BASE_URL = "http://192.144.198.60:8080/v1";
 
 function getProcessEnv(): PublicEnv | undefined {
 	if (typeof process === "undefined") return undefined;

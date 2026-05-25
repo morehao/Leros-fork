@@ -9,8 +9,7 @@
 	},
 	"exports": {
 		".": "./index.ts",
-		"./components/*": "./components/*.tsx",
-		"./styles/globals.css": "./styles/globals.css"
+		"./components/*": "./components/*.tsx"
 	},
 	"dependencies": {
 		"@leros/store": "workspace:*",
