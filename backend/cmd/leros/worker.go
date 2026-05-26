@@ -14,6 +14,7 @@ import (
 	infradb "github.com/insmtx/Leros/backend/internal/infra/db"
 	"github.com/insmtx/Leros/backend/internal/infra/mq"
 	agentruntime "github.com/insmtx/Leros/backend/internal/runtime"
+	runtimemcp "github.com/insmtx/Leros/backend/internal/runtime/mcp"
 	"github.com/insmtx/Leros/backend/internal/worker/identity"
 	"github.com/insmtx/Leros/backend/internal/worker/router"
 	"github.com/insmtx/Leros/backend/internal/worker/taskconsumer"
@@ -109,6 +110,11 @@ func runTaskWorker(defaultRuntime string) {
 		// WorkerAddr is the worker HTTP service address, for example ":8081" or "127.0.0.1:8081".
 		WorkerAddr: workerListenAddr,
 	})
+
+	// Setup MCP auth token before starting HTTP server so /v1/mcp uses the configured value.
+	if cfg.CLI != nil && cfg.CLI.MCP != nil {
+		runtimemcp.SetAuthToken(cfg.CLI.MCP.BearerToken)
+	}
 
 	httpServer, err := startWorkerHTTPServer(workerListenAddr, db)
 	if err != nil {
