@@ -38,6 +38,9 @@ export type ProjectTask = {
 	title: string;
 	meta: string;
 	status: ProjectTaskStatus;
+	taskType?: string;
+	deadline?: string;
+	description?: string;
 };
 
 export type ProjectArtifact = {
@@ -46,12 +49,6 @@ export type ProjectArtifact = {
 	type: "document" | "spreadsheet" | "image";
 	size: string;
 	updatedAt: string;
-};
-
-export type ProjectMemory = {
-	id: string;
-	title: string;
-	content: string;
 };
 
 export type Project = {
@@ -63,7 +60,6 @@ export type Project = {
 	tasks: ProjectTask[];
 	artifacts: ProjectArtifact[];
 	files: ProjectArtifact[];
-	memories: ProjectMemory[];
 };
 
 export type NavGroup = {
@@ -98,7 +94,7 @@ export type LayoutState = {
 	activeWorkspaceId: string | null;
 	activeProjectId: string | null;
 	activeWorkbenchTaskId: string | null;
-	activeProjectTab: "chat" | "tasks" | "files" | "memory";
+	activeProjectTab: "chat" | "tasks" | "files";
 	workspaces: Workspace[];
 	projects: Project[];
 	conversations: Conversation[];
@@ -134,7 +130,6 @@ function mapBackendProject(bp: BackendProject): Project {
 		tasks: [],
 		artifacts: [],
 		files: [],
-		memories: [],
 	};
 }
 
@@ -144,6 +139,9 @@ function mapBackendTask(bt: BackendTask): ProjectTask {
 		title: bt.title,
 		meta: bt.description ?? bt.task_type ?? "",
 		status: (bt.status as ProjectTaskStatus) ?? "todo",
+		taskType: bt.task_type,
+		deadline: bt.deadline,
+		description: bt.description,
 	};
 }
 
@@ -253,7 +251,7 @@ export class LayoutActionImpl {
 		this.#set({ activeWorkbenchTaskId: taskId });
 	};
 
-	setActiveProjectTab = (tab: "chat" | "tasks" | "files" | "memory") => {
+	setActiveProjectTab = (tab: "chat" | "tasks" | "files") => {
 		this.#set({ activeProjectTab: tab });
 	};
 
