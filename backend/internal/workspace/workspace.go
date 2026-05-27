@@ -1,4 +1,4 @@
-// Package workspace provides shared filesystem conventions for Agent task runs.
+// Package workspace 提供 Agent 任务运行所需的共享文件系统约定。
 package workspace
 
 import (
@@ -13,7 +13,7 @@ import (
 	"github.com/insmtx/Leros/backend/pkg/leros"
 )
 
-// TaskWorkspaceRequest identifies one task turn workspace and requested runtime path.
+// TaskWorkspaceRequest 标识一次任务 turn 的工作区和运行目录请求。
 type TaskWorkspaceRequest struct {
 	OrgID            uint
 	ProjectID        string
@@ -22,7 +22,7 @@ type TaskWorkspaceRequest struct {
 	RequestedWorkDir string
 }
 
-// TaskWorkspace describes filesystem paths used by one task turn.
+// TaskWorkspace 描述一次任务 turn 会使用到的文件系统路径。
 type TaskWorkspace struct {
 	WorkspaceRoot        string
 	ProjectRoot          string
@@ -35,7 +35,7 @@ type TaskWorkspace struct {
 	EffectiveWorkDir     string
 }
 
-// PrepareTaskWorkspace creates and validates a project task workspace.
+// PrepareTaskWorkspace 创建并校验项目任务工作区。
 func PrepareTaskWorkspace(ctx context.Context, req TaskWorkspaceRequest) (*TaskWorkspace, error) {
 	plan, err := ResolveTaskWorkspace(req)
 	if err != nil {
@@ -67,7 +67,7 @@ func PrepareTaskWorkspace(ctx context.Context, req TaskWorkspaceRequest) (*TaskW
 	return plan, nil
 }
 
-// PrepareTempWorkspace creates the fallback workspace directory for runs without project context.
+// PrepareTempWorkspace 创建没有项目上下文时使用的临时兜底工作区。
 func PrepareTempWorkspace() (string, error) {
 	dir, err := leros.TempDir()
 	if err != nil {
@@ -79,7 +79,7 @@ func PrepareTempWorkspace() (string, error) {
 	return dir, nil
 }
 
-// ResolveTaskWorkspace computes paths for a task turn workspace without creating them.
+// ResolveTaskWorkspace 只计算任务 turn 工作区路径，不创建任何目录。
 func ResolveTaskWorkspace(req TaskWorkspaceRequest) (*TaskWorkspace, error) {
 	if req.OrgID == 0 {
 		return nil, fmt.Errorf("workspace org_id is required")
@@ -123,7 +123,7 @@ func ResolveTaskWorkspace(req TaskWorkspaceRequest) (*TaskWorkspace, error) {
 	}, nil
 }
 
-// FromAgentRequest resolves workspace paths from the normalized runtime request workspace context.
+// FromAgentRequest 从标准化运行请求中的 workspace 上下文解析工作区路径。
 func FromAgentRequest(req *agent.RequestContext) (*TaskWorkspace, bool, error) {
 	if req == nil {
 		return nil, false, nil
@@ -153,7 +153,7 @@ func FromAgentRequest(req *agent.RequestContext) (*TaskWorkspace, bool, error) {
 	return plan, true, nil
 }
 
-// StorageKey returns a workspace-root-relative path suitable for persistence.
+// StorageKey 返回适合持久化的 workspace root 相对路径。
 func (p *TaskWorkspace) StorageKey(relativePath string) (string, error) {
 	if p == nil {
 		return "", fmt.Errorf("workspace plan is required")
@@ -169,7 +169,7 @@ func (p *TaskWorkspace) StorageKey(relativePath string) (string, error) {
 	return filepath.ToSlash(key), nil
 }
 
-// SafeJoin resolves a relative child path and ensures it remains inside root.
+// SafeJoin 解析相对路径，并确保最终路径仍在指定根目录内。
 func SafeJoin(root string, child string) (string, error) {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {

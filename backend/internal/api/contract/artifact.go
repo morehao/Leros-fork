@@ -21,7 +21,6 @@ type Artifact struct {
 	MimeType     string `json:"mime_type,omitempty"`
 	FileSize     int64  `json:"file_size,omitempty"`
 	Sha256       string `json:"sha256,omitempty"`
-	DownloadURL  string `json:"download_url"`
 }
 
 // ArtifactDownload contains a file stream and HTTP response metadata.

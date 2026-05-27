@@ -2,80 +2,48 @@
 
 ## 1. 背景与目标
 
-本文档定义 Agent 运行时工作区、任务多轮对话产物归属、最终产物声明和附件访问的 v1 方案。
+本文档说明当前 Agent 运行时工作区、任务多轮对话产物归属、最终产物声明、Worker 与 Server 文件路径映射关系。
 
-v1 目标：
+当前实现目标：
 
-- 为每个 project/task 提供隔离的 Agent 工作区。
-- 支持同一个 task 内多轮对话，并能识别每一轮生成了哪些最终产物。
-- 最终产物通过 manifest 显式声明，避免扫描目录后猜测。
-- 产物记录可持久化，并通过任务或消息维度接口返回给前端。
-- 下载接口只暴露 artifact id，不暴露容器内真实路径。
+- 为每个 `org/project/task/request` 准备隔离的 Agent 工作区。
+- 同一个 task 内按 `request_id` 拆分 turn 目录，保证每轮产物声明可单独收集。
+- 最终产物通过 manifest 或 `artifact_declare` 显式声明，不通过扫描目录猜测。
+- Artifact 持久化后通过任务维度接口返回给前端，下载接口只暴露 `artifact_id`。
+- 内部真实路径不通过对外 API 暴露。
 
-v1 不做：
+当前实现不做：
 
 - 不实现正文中的 inline 附件展示。
 - 不实现本地 artifact 文件快照目录。
-- 不通过 `RuntimeOptions` 传递 `ProjectDir`、`OutputDir`、`TmpDir`、`ArtifactManifestPath` 等内部路径。
+- 不通过 worker task 协议或 `RuntimeOptions` 传递 `ProjectDir`、`TmpDir`、`ArtifactManifestPath` 等内部派生路径。
 - 不设计大量 workspace 环境变量。
+- 不在 artifact 表中持久化 `request_id`。`request_id` 目前用于执行期 turn 路径和 manifest 查找，持久化归属依赖 `project_id`、`task_id`、`session_id`、`message_id`。
 
-## 2. 核心原则
+## 2. 当前代码入口
 
-### 2.1 工作区按 project/task 隔离
+| 职责 | 当前实现 |
+| --- | --- |
+| Server 创建用户消息并投递 worker task | `backend/internal/service/message_poster.go` |
+| Worker task 协议结构 | `backend/internal/worker/protocol/task.go` |
+| Worker task 到 runtime request 的映射 | `backend/internal/worker/taskconsumer/mapper.go` |
+| Worker 准备 workspace 并回写实际 `WorkDir` | `backend/internal/worker/taskconsumer/consumer.go` |
+| Workspace 路径计算和校验 | `backend/internal/workspace/workspace.go` |
+| Manifest 读取和 artifact 校验 | `backend/internal/workspace/artifacts.go` |
+| 内置 runtime 注入工具上下文 | `backend/internal/runtime/drivers/native/runner.go` |
+| `artifact_declare` 工具 | `backend/tools/artifact_declare/tool.go` |
+| Artifact 持久化 | `backend/internal/runtime/lifecycle/steps/artifact.go` |
+| Server 侧 artifact 下载路径解析 | `backend/internal/workspace/server_paths.go` |
+| Artifact 查询和下载服务 | `backend/internal/service/artifact_service.go` |
 
-项目之间必须物理隔离。不同 `project_id` 的 Agent 运行目录不能互相访问。
+## 3. Worker 侧路径设计
 
-同一个 task 可能发生多轮对话，因此 task 工作区需要保持稳定，承载连续上下文、文件修改和项目资料。
+Worker 本地 workspace root 使用 `LEROS_WORKSPACE_ROOT`。如果未设置，Linux 默认 `/workspace`，Windows 默认 `%LOCALAPPDATA%/Leros/workspace`。
 
-### 2.2 产物归属按 request/turn 区分
-
-同一个 task 内每一轮用户请求都可能生成产物。为了回答“哪一轮生成了什么”，每轮执行必须有独立 turn 目录。
-
-v1 约定：
-
-```text
-turn_id = request_id
-```
-
-后续 assistant message 创建完成后，artifact 记录再绑定最终 `message_id`。
-
-### 2.3 路径由内部 resolver 统一计算
-
-workspace 路径是系统内部状态，不应作为 runtime API 参数层层传递。
-
-统一由内部 workspace resolver 根据以下业务标识计算：
+有 project 上下文时，Worker 侧目录结构如下：
 
 ```text
-org_id
-project_id
-task_id
-request_id
-```
-
-`RuntimeOptions` 只保留运行控制参数，例如：
-
-```go
-type RuntimeOptions struct {
-    Kind    string `json:"kind,omitempty"`
-    WorkDir string `json:"work_dir,omitempty"`
-    MaxStep int    `json:"max_step,omitempty"`
-}
-```
-
-### 2.4 最终产物必须显式声明
-
-系统不通过扫描目录自动判断最终产物。扫描只能用于校验和补充元数据。
-
-只有写入本轮 `artifacts.jsonl` 且 `is_final: true` 的文件才进入最终产物列表。
-
-## 3. 目录结构
-
-workspace root 沿用现有 `LEROS_WORKSPACE_ROOT`。
-
-v1 目录结构：
-
-```text
-{LEROS_WORKSPACE_ROOT}/
+{WORKER_LEROS_WORKSPACE_ROOT}/
   projects/
     {org_id}/
       {project_id}/
@@ -95,29 +63,24 @@ v1 目录结构：
 
 | 路径 | 职责 |
 | --- | --- |
-| `repo/` | Agent CLI 默认工作目录，也是项目 Git 工作区 |
-| `repo/.git/` | 项目 Git 管理目录 |
-| `repo/.leros/tasks/{task_id}/turns/{request_id}/tmp/` | 本轮临时文件 |
-| `repo/.leros/tasks/{task_id}/turns/{request_id}/logs/` | 本轮日志 |
-| `repo/.leros/tasks/{task_id}/turns/{request_id}/artifacts.jsonl` | 本轮最终产物声明 |
+| `projects/{org_id}/{project_id}/repo/` | 当前项目 Git 工作区，也是默认 Agent 执行目录 |
+| `repo/.git/` | Worker 自动初始化的 Git 管理目录 |
+| `repo/.leros/` | Leros 运行态目录，写入 `repo/.git/info/exclude`，不进入项目 Git |
+| `repo/.leros/tasks/{task_id}/turns/{request_id}/tmp/` | 当前 turn 临时目录 |
+| `repo/.leros/tasks/{task_id}/turns/{request_id}/logs/` | 当前 turn 日志目录 |
+| `repo/.leros/tasks/{task_id}/turns/{request_id}/artifacts.jsonl` | 当前 turn 最终产物 manifest |
 
-`.leros/` 是运行态目录，必须写入 `repo/.git/info/exclude`，不进入项目 Git。
-
-v1 不创建也不依赖以下本地快照目录：
+没有 project 上下文时，Worker 不创建上述 project/task/turn 目录，而是使用：
 
 ```text
-repo/.leros/tasks/{task_id}/artifacts/{artifact_id}/
+{WORKER_LEROS_WORKSPACE_ROOT}/temp
 ```
 
-该能力仅作为后续扩展预留。
+该 fallback 只解决无项目上下文的运行目录问题，不产生可持久化 artifact workspace。
 
 ## 4. Workspace Resolver
 
-建议由一个内部包统一负责 workspace 计算与准备，例如：
-
-```text
-backend/internal/workspace
-```
+当前 resolver 位于 `backend/internal/workspace`。
 
 核心输入：
 
@@ -147,81 +110,176 @@ type TaskWorkspace struct {
 }
 ```
 
-resolver 职责：
+`PrepareTaskWorkspace` 的职责：
 
-- 创建 project repo、task 目录、turn 目录。
+- 根据 `org_id/project_id/task_id/request_id` 计算路径。
+- 创建 turn 的 `tmp`、`logs` 和 `artifacts.jsonl`。
 - 初始化 `repo/.git`。
 - 将 `.leros/` 写入 `repo/.git/info/exclude`。
-- 校验 `runtime.work_dir`。
-- 返回安全后的 `EffectiveWorkDir`。
-- 提供 manifest 路径、turn tmp/log 路径等内部派生路径。
+- 校验和解析请求传入的 `runtime.work_dir`。
+- 创建并返回最终 `EffectiveWorkDir`。
 
-## 5. work_dir 约束
+`ResolveTaskWorkspace` 只计算路径，不创建目录。`FromAgentRequest` 从标准化后的 `agent.RequestContext` 反推出当前 run 的 workspace plan，主要供 artifact 收集和工具上下文注入使用。
 
-`runtime.work_dir` 是用户或上游请求指定的期望工作目录，但不能直接信任。
+## 5. `work_dir` 约束
 
-规则：
+`runtime.work_dir` 是上游指定的期望执行目录，但 Worker 不直接信任它。当前规则：
 
-- 空值：使用 `repo/`。
+- 空值：使用当前 project 的 `repo/`。
 - 相对路径：解析为 `repo/` 内子目录。
-- 绝对路径：必须位于当前 project repo 内。
+- 绝对路径：必须位于当前 project 的 `repo/` 内。
 - 禁止 `..` 逃逸。
 - 禁止软链逃逸。
 - 禁止跨 project workspace。
-- 禁止把工作目录指向 `.leros/tasks/{task_id}/turns/{request_id}/tmp`、logs 或其他运行态目录。
+- 禁止指向 `.git`、`.leros` 等运行态目录。
 
-Agent CLI 实际执行目录使用 resolver 返回的 `EffectiveWorkDir`。
+Worker 准备 workspace 后，会把 `req.Runtime.WorkDir` 覆盖为 resolver 返回的 `EffectiveWorkDir`。后续内置 runtime、外部 CLI、node 工具都应以该值作为实际工作目录。
 
-## 6. 执行流程
+## 6. Server 到 Worker 的协议映射
 
-1. Server 收到用户消息，创建 request。
-2. Server 创建或定位 project、task、session，并生成 `request_id`。
-3. Server 发布 worker task，携带 `org_id`、`project_id`、`task_id`、`request_id`。
-4. Worker 收到 task 后调用 workspace resolver，准备 project repo、task 目录和 turn 目录。
-5. Worker 校验并解析 `runtime.work_dir`，得到 `EffectiveWorkDir`。
-6. Agent CLI 在 `repo/` 或 repo 内子目录执行。
-7. Agent 将需要交付的最终文件写入 project repo 内。
-8. Agent 将本轮最终产物声明写入 `turns/{request_id}/artifacts.jsonl`。
-9. Worker 在完成事件前读取本轮 manifest。
-10. Worker 校验产物路径、文件存在性、mime type、file size 和 sha256。
-11. Worker 将 final artifacts 放入 completed payload。
-12. Server 创建最终 assistant message 时持久化 artifact 记录，并绑定 `task_id`、`session_id`、`message_id`、`request_id`。
-13. 前端通过 task/message artifact 接口查询产物列表，通过 artifact download 接口下载。
+Server 不把内部路径传给 Worker。Server 发布的 `WorkerTaskMessage` 只携带业务标识和运行控制字段。
 
-## 7. Agent 产物声明
+当前字段映射：
 
-v1 采用 JSON Lines manifest。每一行表示一个产物声明。
+| 语义 | Worker task 字段 | 来源 |
+| --- | --- | --- |
+| org id | `route.org_id` | session/caller |
+| worker id | `route.worker_id` | `session.allocated_assistant_id` |
+| session id | `route.session_id` | `session.public_id` |
+| project id | `body.workspace.project_id` | session 关联 project 的 public id |
+| task id | `trace.task_id` | session 关联 task 的 public id；缺失时 fallback 为 `task_{message.ID}` |
+| request id | `trace.request_id` | `req_{message.ID}` |
+| run id | `trace.run_id` | 当前等于 `request_id` |
+| worker task message id | `id` | `msg_{session.ID}_{message.Sequence}` |
+| runtime kind/work_dir/max_step | `body.runtime` | 上游运行控制字段；当前消息投递路径通常为空 |
 
-示例：
+Worker 收到 task 后，`RequestFromWorkerTask` 映射为 `agent.RequestContext`：
+
+```text
+route.org_id                 -> req.Workspace.OrgID
+body.workspace.project_id    -> req.Workspace.ProjectID
+trace.task_id                -> req.Workspace.TaskID / req.TaskID
+trace.request_id             -> req.Workspace.RequestID
+route.session_id             -> req.Conversation.ID
+body.execution.assistant_id  -> req.Assistant.ID
+body.runtime                 -> req.Runtime
+```
+
+随后 `Consumer.prepareWorkspace` 做真正的路径准备：
+
+1. 如果 `body.workspace.project_id` 为空，调用 `PrepareTempWorkspace()`，并把 `req.Runtime.WorkDir` 设置为 `{workspace_root}/temp`。
+2. 如果 `project_id` 存在，使用 `route.org_id`、`body.workspace.project_id`、`trace.task_id`、`trace.request_id` 调用 `PrepareTaskWorkspace()`。
+3. `PrepareTaskWorkspace()` 返回 `EffectiveWorkDir`。
+4. Worker 把 `req.Runtime.WorkDir` 覆盖为 `EffectiveWorkDir`，再交给 runtime 执行。
+
+因此，路径由 Worker 本地 resolver 决定；Server 只决定业务归属和目标 worker。
+
+## 7. Worker 与 Server 的文件系统映射
+
+Worker 侧 artifact 持久化时，`TaskWorkspace.StorageKey(relativePath)` 会把 artifact 绝对路径转换为相对 Worker workspace root 的 key：
+
+```text
+projects/{org_id}/{project_id}/repo/{relative_path}
+```
+
+该 `storage_key` 被写入 artifact 表。它不是容器绝对路径，也不是下载 URL。
+
+Server 下载时需要从自己的视角找到对应 Worker workspace 的挂载目录。当前实现使用：
+
+```text
+{SERVER_LEROS_WORKSPACE_ROOT}/{org_id}/{worker_id}/workspace/{storage_key}
+```
+
+对应代码：
+
+```text
+WorkerMountedWorkspacePath(orgID, workerID)
+  = {SERVER_LEROS_WORKSPACE_ROOT}/{orgID}/{workerID}/workspace
+
+ArtifactStoragePath(orgID, workerID, storageKey)
+  = WorkerMountedWorkspacePath(...) + storageKey
+```
+
+这意味着部署层需要保证：
+
+```text
+Worker 进程看到的 LEROS_WORKSPACE_ROOT
+  == Server 进程看到的 {SERVER_LEROS_WORKSPACE_ROOT}/{org_id}/{worker_id}/workspace
+```
+
+举例：
+
+```text
+Worker:
+  LEROS_WORKSPACE_ROOT=/workspace
+  artifact file=/workspace/projects/1/prj_a/repo/report.md
+  storage_key=projects/1/prj_a/repo/report.md
+
+Server:
+  LEROS_WORKSPACE_ROOT=/data/leros/workers
+  worker mounted workspace=/data/leros/workers/1/1/workspace
+  download path=/data/leros/workers/1/1/workspace/projects/1/prj_a/repo/report.md
+```
+
+当前限制：artifact 表还没有持久化生产该 artifact 的 `worker_id`，`artifact_service.go` 下载时暂时使用 `defaultArtifactWorkerID = 1`。多 worker 场景下需要补齐 `worker_id` 持久化，否则 Server 无法可靠定位产物所在 worker workspace。
+
+## 8. 执行流程
+
+1. Server 收到用户消息，创建或定位 project、task、session，并创建 user message。
+2. Server 生成 `request_id = req_{message.ID}`，并发布 worker task。
+3. Worker 校验 `route.org_id/route.worker_id` 是否匹配当前 consumer。
+4. Worker 将 worker task 映射为 `agent.RequestContext`。
+5. Worker 根据 project 上下文准备 project workspace 或 temp fallback。
+6. Worker 把 resolver 返回的 `EffectiveWorkDir` 写入 `req.Runtime.WorkDir`。
+7. Runtime 在 `req.Runtime.WorkDir` 下执行 Agent。
+8. Agent 创建最终文件，文件必须位于当前 project `repo/` 内。
+9. Agent 调用 `artifact_declare`，或写入本轮 `artifacts.jsonl`。
+10. Runtime lifecycle 在完成事件前读取当前 turn manifest。
+11. 系统校验产物路径、文件存在性、mime type、file size 和 sha256。
+12. Artifact recorder 创建 artifact 表记录，并向运行事件流追加 `artifact.declared`。
+13. Server 创建最终 assistant message 时，根据事件里的 artifact 引用把已有 artifact 绑定到 `message_id`，并把轻量 artifact references 写入 message。
+14. 前端通过 task artifact 接口查询，通过 artifact download 接口下载。
+
+## 9. Agent 产物声明
+
+当前推荐使用 `artifact_declare` 工具声明最终产物：
+
+```text
+artifact_declare(path, title, description, mime_type, artifact_type, is_final)
+```
+
+工具边界要求：
+
+- `path` 必须是完整绝对路径。
+- 文件必须位于当前 project `repo/` 内。
+- 文件必须真实存在，且不能是目录。
+- 不能声明 `.git`、`.leros`、`tmp`、`logs`、`cache` 等运行态或临时路径。
+- 工具内部会把绝对路径转换成 repo-relative path，再追加写入当前 turn 的 `artifacts.jsonl`。
+
+Manifest 仍是 JSON Lines 格式。每一行表示一个产物声明：
 
 ```json
-{"path":"HZSM_case_knowledgebase_reordered_v6_no_h3c.pptx","title":"HZSM_case_knowledgebase_reordered_v6_no_h3c.pptx","description":"最终修改后的 PPT 文件","mime_type":"application/vnd.openxmlformats-officedocument.presentationml.presentation","artifact_type":"file","is_final":true}
+{"path":"report.md","title":"项目报告","description":"最终报告","mime_type":"text/markdown","artifact_type":"file","is_final":true}
 ```
 
 字段：
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `path` | 是 | 相对 project repo 的文件路径 |
+| `path` | 是 | 相对 project repo 的文件路径；由 `artifact_declare` 写入时自动转换 |
 | `title` | 否 | 前端展示名，空值时使用文件名 |
 | `description` | 否 | 产物说明 |
 | `mime_type` | 否 | 空值时由系统探测 |
 | `artifact_type` | 否 | 默认 `file` |
 | `is_final` | 是 | 只有 `true` 才进入最终产物列表 |
 
-manifest 路径由内部 resolver 计算。系统提示或 wrapper 可以告知 Agent “本轮最终产物声明文件在哪里”，但不应暴露整套 workspace 路径参数。
+内置 runtime 会通过 `ToolContext.Metadata` 注入 `repo_dir` 和 `artifact_manifest_path`，供 `artifact_declare` 定位 manifest。
 
-如后续希望完全避免环境变量，可提供内部工具：
+外部 CLI/MCP 路径当前有临时 fallback：如果工具上下文没有注入 manifest 信息，`artifact_declare` 会从 artifact 文件路径向上查找 `.leros`，再选择最新 task/turn 的 `artifacts.jsonl`。这是过渡方案，后续应改为给外部 CLI MCP 请求注入真实 run-scoped `ToolContext`。
 
-```text
-artifact_declare(path, title, description, mime_type)
-```
+## 10. 产物收集规则
 
-工具内部写入本轮 manifest。
-
-## 8. 产物收集规则
-
-Worker 完成任务时读取当前 turn 的 `artifacts.jsonl`。
+Runtime 完成任务前读取当前 turn 的 `artifacts.jsonl`。
 
 收集规则：
 
@@ -230,7 +288,7 @@ Worker 完成任务时读取当前 turn 的 `artifacts.jsonl`。
 - 不允许绝对路径。
 - 不允许 `..`。
 - 不允许软链逃逸。
-- 不允许指向 `.git`、`.leros`、tmp、logs 等运行态目录。
+- 不允许指向 `.git`、`.leros` 等运行态目录。
 - 文件必须真实存在。
 - 文件不能是目录。
 - 系统补充 `mime_type`、`file_size`、`sha256`。
@@ -240,25 +298,31 @@ Worker 完成任务时读取当前 turn 的 `artifacts.jsonl`。
 
 - 不进入最终产物列表。
 - 不展示给用户。
-- 可作为日志或调试信息记录，但不作为 artifact 持久化。
+- 不作为 artifact 持久化。
 
-## 9. 持久化模型
+## 11. 持久化模型
 
-Artifact 记录需要支持任务维度、消息维度和请求轮次维度。
+当前 artifact 表结构位于 `backend/types/artifact.go`。
 
-建议字段：
+当前关键字段：
 
 ```text
-artifact_id
+public_id
 org_id
+owner_id
 project_id
 task_id
 session_id
 message_id
-request_id
-relative_path
+title
+filename
+description
+artifact_type
+file_url
 mime_type
 file_size
+relative_path
+storage_key
 sha256
 source
 status
@@ -269,59 +333,65 @@ created_at
 
 | 字段 | 说明 |
 | --- | --- |
-| `artifact_id` | 对外稳定 ID |
-| `task_id` | 所属 task |
-| `session_id` | 所属 session |
-| `message_id` | 所属 assistant message |
-| `request_id` | 所属 turn |
+| `public_id` | 对外稳定 artifact id，例如 `art_xxx` |
+| `project_id` | DB 内部 project id |
+| `task_id` | DB 内部 task id |
+| `session_id` | DB 内部 session id |
+| `message_id` | DB 内部 assistant message id；artifact 初始创建时可为空，message 完成时绑定 |
 | `relative_path` | 相对 project repo 的路径 |
+| `storage_key` | 相对 Worker workspace root 的路径，用于 Server 下载映射 |
 | `sha256` | 文件内容 hash |
-| `source` | v1 默认为 `agent_declared` |
-| `status` | `completed`、`failed` 等 |
+| `source` | 当前默认为 `agent_declared` |
+| `status` | 当前完成态为 `completed` |
 
-同一个 task 的多轮产物通过 `request_id` 或 `message_id` 区分。
+注意：
 
-## 10. API 设计
+- 当前 artifact 表没有 `request_id` 字段。
+- 当前 artifact 表没有 `worker_id` 字段；下载临时假设 `worker_id = 1`。
+- 多轮归属在执行期由 `request_id` 区分 turn manifest；持久化后主要通过 `message_id` 和 session/task 归属区分。
 
-v1 预留接口：
+## 12. API 设计
+
+当前已注册接口：
 
 ```text
 GET /v1/tasks/{task_id}/artifacts
-GET /v1/tasks/{task_id}/artifacts?group_by=turn
-GET /v1/messages/{message_id}/artifacts
 GET /v1/artifacts/{artifact_id}/download
 ```
 
-任务产物列表返回示例：
+当前未实现但可后续扩展：
+
+```text
+GET /v1/messages/{message_id}/artifacts
+GET /v1/tasks/{task_id}/artifacts?group_by=turn
+```
+
+任务产物列表当前返回轻量信息，不返回下载 URL，也不返回内部路径：
 
 ```json
 [
   {
     "artifact_id": "art_xxx",
-    "task_id": "task_xxx",
-    "message_id": "123",
-    "request_id": "req_xxx",
-    "title": "HZSM_case_knowledgebase_reordered_v6_no_h3c.pptx",
+    "title": "项目报告",
+    "filename": "report.md",
+    "description": "最终报告",
     "artifact_type": "file",
-    "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "mime_type": "text/markdown",
     "file_size": 123456,
-    "sha256": "...",
-    "download_url": "/v1/artifacts/art_xxx/download",
-    "created_at": "2026-05-26T12:00:00Z"
+    "sha256": "..."
   }
 ]
 ```
 
-下载接口 v1：
+下载接口当前流程：
 
-- 根据 `artifact_id` 查询 artifact 记录。
-- 校验当前用户是否可访问对应 org/project/task。
-- 根据 project repo 和 `relative_path` 解析真实文件路径。
-- 校验路径仍在当前 project repo 内。
-- 返回文件内容。
-- 不向前端暴露容器绝对路径。
+- 根据 `artifact_id` 和当前用户 org 查询 artifact。
+- 使用 artifact 的 `storage_key` 和 Server 侧 worker workspace 挂载规则解析真实文件路径。
+- 校验 `storage_key` 不为空、不是绝对路径、不会逃逸 worker workspace。
+- 打开文件并返回文件内容。
+- 不向前端暴露容器或宿主机绝对路径。
 
-## 11. 多轮对话产物归属
+## 13. 多轮对话产物归属
 
 同一个 task 内可能发生多轮对话：
 
@@ -332,44 +402,73 @@ task_1
   request_3 -> assistant message C -> artifacts: a.pptx
 ```
 
-每轮产物记录都绑定：
+当前实现中的归属链：
 
 ```text
-task_id + request_id + message_id
+执行期:
+  org_id + project_id + task_id + request_id
+  -> repo/.leros/tasks/{task_id}/turns/{request_id}/artifacts.jsonl
+
+持久化:
+  artifact -> project_id + task_id + session_id
+  assistant message 完成后 -> artifact.message_id
 ```
 
-因此系统可以回答：
+因此当前系统可以稳定回答：
 
-- 某个 task 一共生成过哪些产物。
-- 某一轮 request 生成了哪些产物。
-- 某条 assistant message 底部应该展示哪些附件。
-- 同名文件在不同轮次分别由哪次生成。
+- 某个 task 当前累计有哪些 completed artifacts。
+- 某条 assistant message 底部应该展示哪些已绑定附件。
 
-## 12. v1 历史文件限制
+当前系统还不能仅依赖 artifact 表直接回答：
 
-v1 不实现本地文件快照目录，因此如果后续轮次覆盖了同名文件，历史 artifact 的 `relative_path` 可能指向被覆盖后的当前文件。
+- 某个 `request_id` 生成了哪些 artifact。
+- 多 worker 场景下某个 artifact 必然位于哪个 worker workspace。
 
-v1 仍记录：
+这两个能力分别需要补齐 `request_id` 或明确的 turn 归属字段，以及 `worker_id` 持久化。
+
+## 14. v1 历史文件限制
+
+当前不实现本地文件快照目录。因此如果后续轮次覆盖了同名文件，历史 artifact 的 `relative_path` 和 `storage_key` 可能指向被覆盖后的当前文件。
+
+当前仍记录：
 
 ```text
-request_id
 message_id
 relative_path
+storage_key
 sha256
 created_at
 ```
 
-这些字段用于识别产物归属和检测内容是否已变化。
+这些字段可用于识别归属和检测内容是否已变化，但不能冻结历史文件内容。
 
-如果需要冻结历史文件内容，应进入后续版本，通过 Git、S3 或本地快照目录实现。
+如果需要冻结历史文件内容，应进入后续版本，通过 Git、S3/MinIO 或本地快照目录实现。
 
-## 13. 后续扩展
+## 15. 后续扩展
 
-### 13.1 Git 历史文件
+### 15.1 持久化 worker_id
 
-后续可在任务完成时提交或记录 blob。
+Artifact 下载当前需要知道产物来自哪个 worker workspace，但 artifact 表没有 `worker_id`。多 worker 场景应优先补齐：
 
-artifact 记录增加：
+```text
+worker_id
+```
+
+下载时使用 artifact 自身的 `org_id + worker_id + storage_key` 解析 Server 侧文件路径。
+
+### 15.2 request/turn 维度查询
+
+如果产品需要按“哪一轮 request 生成了什么”直接查询，需在持久化模型中增加：
+
+```text
+request_id
+```
+
+或引入独立 run/turn 表，将 artifact 关联到 run/turn。
+
+### 15.3 Git 历史文件
+
+后续可在任务完成时提交或记录 blob：
 
 ```text
 git_commit
@@ -378,11 +477,9 @@ git_blob
 
 下载时按 commit/blob 读取历史版本，避免同名文件覆盖问题。
 
-### 13.2 S3 / MinIO
+### 15.4 S3 / MinIO
 
-后续可在任务完成后上传 artifact 文件到对象存储。
-
-artifact 记录增加或使用：
+后续可在任务完成后上传 artifact 文件到对象存储：
 
 ```text
 storage_backend = s3
@@ -391,7 +488,7 @@ storage_key = ...
 
 下载接口保持不变，前端无感知。
 
-### 13.3 本地文件快照目录
+### 15.5 本地文件快照目录
 
 如需本地冻结历史文件，可后续引入：
 
@@ -399,15 +496,9 @@ storage_key = ...
 repo/.leros/tasks/{task_id}/artifacts/{artifact_id}/
 ```
 
-该目录不属于 v1 实现范围。
+该目录不属于当前实现范围。
 
-### 13.4 正文 inline artifact
-
-后续可通过结构化 message chunk 或 annotation，在 assistant 正文中展示文件链接。
-
-v1 只要求最终产物列表可查询和下载。
-
-### 13.5 attempt / retry
+### 15.6 attempt / retry
 
 如果同一个 request 需要多次执行，可扩展：
 
@@ -415,13 +506,15 @@ v1 只要求最终产物列表可查询和下载。
 turns/{request_id}/attempts/{attempt_id}/
 ```
 
-v1 暂不引入 attempt 维度。
+当前暂不引入 attempt 维度。
 
-## 14. 验收标准
+## 16. 当前验收标准
 
-- 工作区目录使用 `projects/{org_id}/{project_id}/repo`。
-- 多轮产物声明目录使用 `tasks/{task_id}/turns/{request_id}`。
-- 文档不要求 v1 实现本地 artifact 快照目录。
-- 文档明确内部路径不通过 `RuntimeOptions` 传递。
-- 文档明确最终产物来自 manifest 显式声明。
-- 文档明确 v1 历史文件冻结由后续 Git/S3/本地快照方案解决。
+- 文档明确 Worker 侧 workspace 路径使用 `projects/{org_id}/{project_id}/repo`。
+- 文档明确多轮 manifest 目录使用 `tasks/{task_id}/turns/{request_id}`。
+- 文档明确 Server 不通过 worker task 协议传递内部派生路径。
+- 文档明确 Worker 准备 workspace 后会把 `req.Runtime.WorkDir` 改写为 `EffectiveWorkDir`。
+- 文档明确 Worker 侧 `storage_key` 与 Server 侧挂载路径的映射关系。
+- 文档明确当前 artifact 表不持久化 `request_id` 和 `worker_id`，以及这两个缺口对查询和下载的影响。
+- 文档明确最终产物来自 manifest 或 `artifact_declare` 显式声明。
+- 文档不要求当前实现本地 artifact 快照目录。

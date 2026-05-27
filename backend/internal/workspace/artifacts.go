@@ -18,7 +18,7 @@ import (
 	"github.com/insmtx/Leros/backend/types"
 )
 
-// ManifestArtifact is one JSON Lines declaration written by an agent turn.
+// ManifestArtifact 表示 Agent 在一次 turn 中写入 JSON Lines manifest 的一条产物声明。
 type ManifestArtifact struct {
 	Path         string `json:"path"`
 	Title        string `json:"title,omitempty"`
@@ -28,7 +28,7 @@ type ManifestArtifact struct {
 	IsFinal      bool   `json:"is_final,omitempty"`
 }
 
-// ArtifactRecord is the validated, storage-ready form of a manifest artifact.
+// ArtifactRecord 是 manifest 产物声明经过校验后可持久化的结构。
 type ArtifactRecord struct {
 	Title        string
 	Filename     string
@@ -43,7 +43,7 @@ type ArtifactRecord struct {
 	Status       string
 }
 
-// CollectFinalArtifacts reads and validates the final artifact manifest.
+// CollectFinalArtifacts 读取并校验最终产物 manifest。
 func CollectFinalArtifacts(ctx context.Context, plan *TaskWorkspace) ([]ArtifactRecord, error) {
 	if plan == nil || strings.TrimSpace(plan.ArtifactManifestPath) == "" {
 		return nil, nil
@@ -106,7 +106,7 @@ func CollectFinalArtifacts(ctx context.Context, plan *TaskWorkspace) ([]Artifact
 	return artifacts, nil
 }
 
-// BuildArtifactRecord validates an artifact declaration and builds its storage record.
+// BuildArtifactRecord 校验一条产物声明，并生成可存储的产物记录。
 func BuildArtifactRecord(plan *TaskWorkspace, item ManifestArtifact) (ArtifactRecord, error) {
 	absolute, err := SafeJoin(plan.RepoDir, item.Path)
 	if err != nil {

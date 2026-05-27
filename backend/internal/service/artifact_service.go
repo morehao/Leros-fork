@@ -12,13 +12,15 @@ import (
 
 	"github.com/insmtx/Leros/backend/internal/api/contract"
 	"github.com/insmtx/Leros/backend/internal/infra/db"
-	"github.com/insmtx/Leros/backend/pkg/leros"
+	agentworkspace "github.com/insmtx/Leros/backend/internal/workspace"
 	"github.com/insmtx/Leros/backend/types"
 )
 
 type artifactService struct {
 	db *gorm.DB
 }
+
+const defaultArtifactWorkerID uint = 1
 
 // NewArtifactService creates a service for generated artifacts.
 func NewArtifactService(db *gorm.DB) contract.ArtifactService {
@@ -66,7 +68,8 @@ func (s *artifactService) GetArtifactDownload(ctx context.Context, artifactPubli
 	if artifact == nil {
 		return nil, errors.New("artifact not found")
 	}
-	path, err := storagePath(artifact.StorageKey)
+	// TODO: persist and use the worker_id that produced this artifact.
+	path, err := agentworkspace.ArtifactStoragePath(artifact.OrgID, defaultArtifactWorkerID, artifact.StorageKey)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +98,6 @@ func convertToContractArtifact(artifact *types.Artifact) contract.Artifact {
 		MimeType:     artifact.MimeType,
 		FileSize:     artifact.FileSize,
 		Sha256:       artifact.Sha256,
-		DownloadURL:  "/v1/artifacts/" + artifact.PublicID + "/download",
 	}
 }
 
@@ -110,33 +112,6 @@ func artifactDownloadName(artifact *types.Artifact) string {
 		return strings.TrimSpace(artifact.Title)
 	}
 	return filepath.Base(strings.TrimSpace(artifact.RelativePath))
-}
-
-func storagePath(storageKey string) (string, error) {
-	key := strings.TrimSpace(storageKey)
-	if key == "" || filepath.IsAbs(key) {
-		return "", fmt.Errorf("invalid artifact storage key")
-	}
-	root, err := leros.WorkspaceRoot()
-	if err != nil {
-		return "", err
-	}
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-	pathAbs, err := filepath.Abs(filepath.Join(rootAbs, filepath.FromSlash(key)))
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(rootAbs, pathAbs)
-	if err != nil {
-		return "", err
-	}
-	if rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("artifact storage key escapes workspace")
-	}
-	return pathAbs, nil
 }
 
 var _ contract.ArtifactService = (*artifactService)(nil)

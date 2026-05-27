@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 	"github.com/insmtx/Leros/backend/internal/worker/identity"
 	"github.com/insmtx/Leros/backend/internal/worker/router"
 	"github.com/insmtx/Leros/backend/internal/worker/taskconsumer"
-	nodetools "github.com/insmtx/Leros/backend/tools/node"
+	"github.com/insmtx/Leros/backend/pkg/leros"
 	"github.com/spf13/cobra"
 	"github.com/ygpkg/yg-go/lifecycle"
 	"github.com/ygpkg/yg-go/logs"
@@ -31,6 +32,7 @@ var (
 	workerDefaultRuntime string
 	workerListenAddr     string
 	workerWorkerID       uint
+	workerWorkspaceRoot  string
 )
 
 var workerCmd = &cobra.Command{
@@ -53,6 +55,7 @@ func init() {
 	workerCmd.PersistentFlags().StringVar(&workerServerAddr, "server-addr", "127.0.0.1:8080", "Server address for WebSocket connection")
 	workerCmd.PersistentFlags().StringVar(&workerListenAddr, "listen-addr", ":8081", "Worker HTTP server listen address (MCP + model router)")
 	workerCmd.PersistentFlags().UintVar(&workerWorkerID, "worker-id", 0, "Worker ID for configuration retrieval")
+	workerCmd.PersistentFlags().StringVar(&workerWorkspaceRoot, "workspace-root", "", "Default worker workspace root")
 	workerCmd.PersistentFlags().StringVar(&workerDefaultRuntime, "default-runtime", "", "Default agent runtime kind, for example leros, claude, or codex")
 	rootCmd.AddCommand(workerCmd)
 }
@@ -73,6 +76,10 @@ func loadWorkerConfig() (*config.WorkerConfig, error) {
 		cfg.ServerAddr = workerServerAddr
 		logs.Infof("Using server address from flag: %s", workerServerAddr)
 	}
+	if strings.TrimSpace(workerWorkspaceRoot) != "" {
+		cfg.WorkspaceRoot = workerWorkspaceRoot
+		logs.Infof("Using workspace root from flag: %s", workerWorkspaceRoot)
+	}
 
 	return cfg, nil
 }
@@ -85,6 +92,10 @@ func runTaskWorker(defaultRuntime string) {
 	}
 	if err := validateTaskWorkerConfig(cfg); err != nil {
 		logs.Fatalf("Invalid worker config: %v", err)
+		return
+	}
+	if err := applyWorkerWorkspaceRoot(cfg); err != nil {
+		logs.Fatalf("Invalid worker workspace config: %v", err)
 		return
 	}
 
@@ -134,9 +145,6 @@ func runTaskWorker(defaultRuntime string) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	if cfg.WriteSafeRoot != "" {
-		nodetools.SetWriteSafeRoot(cfg.WriteSafeRoot)
-	}
 	runtimeService, err := agentruntime.NewService(ctx, agentruntime.Options{
 		CLIConfig:      cfg.CLI,
 		ToolsEnabled:   true,
@@ -167,8 +175,7 @@ func runTaskWorker(defaultRuntime string) {
 		// 使用新的分层架构 BootstrapService
 		bootstrapSvc := builtin.NewBootstrapService()
 		_, err := bootstrapSvc.Bootstrap(ctx, cfg.CLI, builtin.BootstrapOptions{
-			SkillsSourceDir: cfg.SkillsDir,
-			MCP:             mcpCfg,
+			MCP: mcpCfg,
 		})
 		if err != nil {
 			logs.Warnf("Bootstrap CLI engines failed: %v", err)
@@ -221,6 +228,21 @@ func validateTaskWorkerConfig(cfg *config.WorkerConfig) error {
 	if cfg.Database == nil || strings.TrimSpace(cfg.Database.URL) == "" {
 		return fmt.Errorf("worker.database.url is required")
 	}
+	return nil
+}
+
+func applyWorkerWorkspaceRoot(cfg *config.WorkerConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	root := strings.TrimSpace(cfg.WorkspaceRoot)
+	if root == "" {
+		return nil
+	}
+	if err := os.Setenv(leros.EnvWorkspaceRoot, root); err != nil {
+		return fmt.Errorf("set %s: %w", leros.EnvWorkspaceRoot, err)
+	}
+	logs.Infof("Using workspace root from config: %s", root)
 	return nil
 }
 
