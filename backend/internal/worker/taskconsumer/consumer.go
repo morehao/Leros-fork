@@ -103,6 +103,9 @@ func (c *Consumer) handleEvent(ctx context.Context, msg *nats.Msg) error {
 	if taskMsg.Body.TaskType != protocol.TaskTypeAgentRun {
 		return fmt.Errorf("unsupported worker task type %q", taskMsg.Body.TaskType)
 	}
+	if err := validateModelConfig(taskMsg.Body.Model); err != nil {
+		return err
+	}
 
 	logs.InfoContextf(ctx,
 		"Received worker task: msg_id=%s task_id=%s run_id=%s org_id=%s worker_id=%s session_id=%s task_type=%s",
@@ -116,6 +119,19 @@ func (c *Consumer) handleEvent(ctx context.Context, msg *nats.Msg) error {
 	)
 
 	c.schedule(ctx, taskMsg)
+	return nil
+}
+
+func validateModelConfig(model protocol.ModelOptions) error {
+	if strings.TrimSpace(model.Provider) == "" {
+		return fmt.Errorf("llm provider is required")
+	}
+	if strings.TrimSpace(model.Model) == "" {
+		return fmt.Errorf("llm model is required")
+	}
+	if strings.TrimSpace(model.APIKey) == "" {
+		return fmt.Errorf("llm api_key is required")
+	}
 	return nil
 }
 

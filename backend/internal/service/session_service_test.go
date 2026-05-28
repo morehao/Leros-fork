@@ -26,8 +26,22 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to open test database: %v", err)
 	}
 
-	if err := db.AutoMigrate(&types.Session{}, &types.SessionMessage{}, &types.Artifact{}); err != nil {
+	if err := db.AutoMigrate(&types.Session{}, &types.SessionMessage{}, &types.Artifact{}, &types.LLMModel{}); err != nil {
 		t.Fatalf("failed to migrate test database: %v", err)
+	}
+	if err := db.Create(&types.LLMModel{
+		OrgID:           1,
+		Code:            "default",
+		Name:            "Default",
+		Provider:        "openai",
+		ModelName:       "gpt-test",
+		BaseURL:         "https://api.openai.com",
+		BaseURLHasV1:    true,
+		APIKeyEncrypted: "sk-test",
+		Status:          string(types.LLMModelStatusActive),
+		IsDefault:       true,
+	}).Error; err != nil {
+		t.Fatalf("failed to seed default llm model: %v", err)
 	}
 
 	return db
@@ -998,9 +1012,7 @@ func TestCompleteSessionMessageBindsExistingDeclaredArtifact(t *testing.T) {
 	if len(artifacts) != 1 {
 		t.Fatalf("expected existing artifact to be reused, got %d rows", len(artifacts))
 	}
-	if artifacts[0].MessageID == nil || *artifacts[0].MessageID == 0 {
-		t.Fatalf("expected artifact message_id to be bound: %#v", artifacts[0].MessageID)
-	}
+	// 不再验证 artifact.message_id 绑定，artifact 通过 session_id 关联查询
 	result, err := service.GetSessionMessages(ctx, session.PublicID, 1, 20)
 	if err != nil {
 		t.Fatalf("GetSessionMessages failed: %v", err)

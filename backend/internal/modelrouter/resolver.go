@@ -5,80 +5,32 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"gorm.io/gorm"
-
-	infradb "github.com/insmtx/Leros/backend/internal/infra/db"
-	"github.com/insmtx/Leros/backend/types"
 )
 
-type Resolver struct {
-	db *gorm.DB
+type Resolver struct{}
+
+// NewResolver creates a model resolver backed by the worker-local singleton store.
+func NewResolver() *Resolver {
+	return &Resolver{}
 }
 
-func NewResolver(db *gorm.DB) *Resolver {
-	return &Resolver{db: db}
-}
-
-func (r *Resolver) Resolve(ctx context.Context, orgID uint, modelName string) (*UpstreamConfig, error) {
-	if r.db == nil {
-		return nil, errors.New("database is not initialized")
+// Resolve returns the cached upstream model configuration for one model name.
+func (r *Resolver) Resolve(_ context.Context, modelName string) (*UpstreamConfig, error) {
+	if r == nil || DefaultStore() == nil {
+		return nil, errors.New("llm model cache is not initialized")
 	}
 
-	var (
-		model *types.LLMModel
-		err   error
-	)
-
-	if modelName != "" {
-		model, err = infradb.GetActiveLLMModelByName(ctx, r.db, orgID, modelName)
-	} else {
-		model, err = infradb.GetDefaultLLMModel(ctx, r.db, orgID)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("query llm model: %w", err)
-	}
-	if model == nil {
+	cfg, ok := DefaultStore().resolve(modelName)
+	if !ok {
 		if modelName != "" {
-			return nil, fmt.Errorf("llm model %q not found or inactive", modelName)
+			return nil, fmt.Errorf("llm model %q not found in worker cache", modelName)
 		}
-		return nil, errors.New("no default llm model configured for this organization")
+		return nil, errors.New("no llm model configured in worker cache")
 	}
-
-	if model.OrgID != orgID {
-		return nil, fmt.Errorf("llm model %q does not belong to current organization", modelName)
-	}
-
-	upstreamProtocol := resolveUpstreamProtocol(model)
-
-	baseURL := model.BaseURL
-	if baseURL == "" {
-		baseURL = defaultBaseURL(model.Provider)
-	}
-
-	cfg := &UpstreamConfig{
-		ModelName:    model.ModelName,
-		Provider:     model.Provider,
-		BaseURL:      baseURL,
-		BaseURLHasV1: model.BaseURLHasV1,
-		APIKey:       model.APIKeyEncrypted,
-		Protocol:     upstreamProtocol,
-		MaxTokens:    model.MaxTokens,
-		Temperature:  model.Temperature,
-		TimeoutSec:   model.TimeoutSec,
+	if cfg.Provider == "" || cfg.ModelName == "" || cfg.APIKey == "" {
+		return nil, errors.New("cached llm model config is incomplete")
 	}
 	return cfg, nil
-}
-
-func resolveUpstreamProtocol(model *types.LLMModel) Protocol {
-	if model.Config != nil {
-		if raw, ok := model.Config["protocol"]; ok {
-			if s, ok := raw.(string); ok && s != "" {
-				return Protocol(s)
-			}
-		}
-	}
-	return DefaultProtocolForProvider(model.Provider)
 }
 
 func defaultBaseURL(provider string) string {

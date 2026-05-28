@@ -6,91 +6,61 @@ import (
 	"strings"
 
 	"github.com/insmtx/Leros/backend/internal/agent"
-	infradb "github.com/insmtx/Leros/backend/internal/infra/db"
+	"github.com/insmtx/Leros/backend/internal/modelrouter"
 	"github.com/insmtx/Leros/backend/internal/worker/identity"
-	"github.com/insmtx/Leros/backend/types"
-	"gorm.io/gorm"
 )
 
-// ModelResolver 解析单次运行的具体模型配置。
-type ModelResolver interface {
-	ResolveModel(ctx context.Context, req *agent.RequestContext) (*agent.ModelOptions, error)
-}
-
-// DBModelResolver 从持久化的 LLM 模型记录中解析模型设置。
-type DBModelResolver struct {
-	db    *gorm.DB
-	orgID uint
-}
-
-type ModelStep struct {
-	Resolver ModelResolver
-}
+// ModelStep initializes model routing based on the current request configuration.
+// It writes the real upstream configuration to modelrouter store and modifies the
+// request's BaseURL to use the built-in worker model proxy.
+type ModelStep struct{}
 
 func (ModelStep) Name() string {
 	return "model"
 }
 
 func (s ModelStep) Run(ctx context.Context, state *State) error {
-	return EnsureModelConfig(ctx, state.Request, s.Resolver)
+	return initModelRouting(ctx, state.Request)
 }
 
-// NewDBModelResolver 创建一个由模型表支持的模型解析器。
-func NewDBModelResolver(db *gorm.DB, orgID uint) *DBModelResolver {
-	return &DBModelResolver{db: db, orgID: orgID}
-}
-
-// ResolveModel 根据持久化的模型表填充 req.Model。
-func (r *DBModelResolver) ResolveModel(ctx context.Context, req *agent.RequestContext) (*agent.ModelOptions, error) {
+// initModelRouting validates and initializes model routing for the request.
+func initModelRouting(_ context.Context, req *agent.RequestContext) error {
 	if req == nil {
-		return nil, fmt.Errorf("request context is required")
-	}
-	if req.Model.Provider != "" && req.Model.Model != "" && req.Model.APIKey != "" {
-		model := req.Model
-		return &model, nil
+		return fmt.Errorf("request context is required")
 	}
 
-	if r == nil || r.orgID == 0 {
-		return nil, nil
+	// Validate required fields
+	if strings.TrimSpace(req.Model.Provider) == "" {
+		return fmt.Errorf("llm provider is required")
 	}
-	if r.db == nil {
-		return nil, fmt.Errorf("database is not initialized")
+	if strings.TrimSpace(req.Model.Model) == "" {
+		return fmt.Errorf("llm model is required")
 	}
-
-	var (
-		model *types.LLMModel
-		err   error
-	)
-	if req.Model.ID > 0 {
-		model, err = infradb.GetLLMModelByID(ctx, r.db, req.Model.ID)
-	} else {
-		model, err = infradb.GetDefaultLLMModel(ctx, r.db, r.orgID)
-	}
-	if err != nil {
-		return nil, err
-	}
-	if model == nil {
-		return nil, fmt.Errorf("llm model not found")
-	}
-	if model.OrgID != r.orgID {
-		return nil, fmt.Errorf("llm model does not belong to current org")
-	}
-	if model.Status != string(types.LLMModelStatusActive) {
-		return nil, fmt.Errorf("llm model is inactive")
+	if strings.TrimSpace(req.Model.APIKey) == "" {
+		return fmt.Errorf("llm api_key is required")
 	}
 
-	resolved := req.Model
-	resolved.ID = model.ID
-	resolved.Provider = model.Provider
-	resolved.Model = model.ModelName
-	resolved.APIKey = model.APIKeyEncrypted
-	resolved.BaseURL = workerModelProxyBaseURL()
-	if resolved.Temperature == 0 {
-		resolved.Temperature = model.Temperature
+	// Write the original upstream config to modelrouter store
+	// Keep the original BaseURL and BaseURLHasV1 from the request
+	upstreamCfg := modelrouter.UpstreamConfig{
+		ModelName:    strings.TrimSpace(req.Model.Model),
+		Provider:     strings.TrimSpace(req.Model.Provider),
+		BaseURL:      strings.TrimSpace(req.Model.BaseURL),
+		BaseURLHasV1: req.Model.BaseURLHasV1,
+		APIKey:       strings.TrimSpace(req.Model.APIKey),
+		Protocol:     modelrouter.DefaultProtocolForProvider(req.Model.Provider),
+		Temperature:  req.Model.Temperature,
 	}
-	return &resolved, nil
+	modelrouter.DefaultStore().Put(upstreamCfg)
+
+	// Change the request's BaseURL to use the built-in worker model proxy
+	// Keep BaseURLHasV1 as the original value from the request
+	req.Model.BaseURL = workerModelProxyBaseURL()
+
+	return nil
 }
 
+// workerModelProxyBaseURL returns the built-in model proxy BaseURL for the worker.
 func workerModelProxyBaseURL() string {
 	addr := strings.TrimSpace(identity.WorkerAddr())
 	if addr == "" {
@@ -106,32 +76,11 @@ func workerModelProxyBaseURL() string {
 	return ensureV1Suffix("http://" + addr)
 }
 
+// ensureV1Suffix ensures the BaseURL ends with /v1 if needed.
 func ensureV1Suffix(baseURL string) string {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" || strings.HasSuffix(baseURL, "/v1") {
 		return baseURL
 	}
 	return baseURL + "/v1"
-}
-
-// EnsureModelConfig 在需要时将解析后的模型配置应用到 req。
-func EnsureModelConfig(ctx context.Context, req *agent.RequestContext, resolver ModelResolver) error {
-	if req == nil {
-		return fmt.Errorf("request context is required")
-	}
-	if req.Model.Provider != "" && req.Model.Model != "" && req.Model.APIKey != "" {
-		return nil
-	}
-	if resolver == nil {
-		return nil
-	}
-	resolved, err := resolver.ResolveModel(ctx, req)
-	if err != nil {
-		return err
-	}
-	if resolved == nil {
-		return nil
-	}
-	req.Model = *resolved
-	return nil
 }

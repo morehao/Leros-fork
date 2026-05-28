@@ -127,7 +127,7 @@ func runTaskWorker(defaultRuntime string) {
 		runtimemcp.SetAuthToken(cfg.CLI.MCP.BearerToken)
 	}
 
-	httpServer, err := startWorkerHTTPServer(workerListenAddr, db)
+	httpServer, err := startWorkerHTTPServer(workerListenAddr)
 	if err != nil {
 		logs.Fatalf("Failed to start worker HTTP server: %v", err)
 		return
@@ -246,7 +246,7 @@ func applyWorkerWorkspaceRoot(cfg *config.WorkerConfig) error {
 	return nil
 }
 
-func startWorkerHTTPServer(addr string, db *gorm.DB) (*http.Server, error) {
+func startWorkerHTTPServer(addr string) (*http.Server, error) {
 	if strings.TrimSpace(addr) == "" {
 		addr = ":8081"
 	}
@@ -256,7 +256,7 @@ func startWorkerHTTPServer(addr string, db *gorm.DB) (*http.Server, error) {
 		return nil, fmt.Errorf("listen on %s: %w", addr, err)
 	}
 
-	r := router.SetupRouter(db)
+	r := router.SetupRouter()
 
 	server := &http.Server{
 		Addr:    addr,
