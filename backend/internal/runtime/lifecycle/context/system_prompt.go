@@ -51,6 +51,7 @@ func (b *ContextBuilder) buildSkillLoadingContext() string {
 //  7. 产物声明（必须声明交付物，否则用户不可见）
 //  8. 持久化记忆注入（USER.md + MEMORY.md）
 //  9. 运行元信息（日期 / SessionID / Model）
+//
 // 10. 平台格式指导（按 Channel）
 func (b *ContextBuilder) BuildSystemPrompt(ctx context.Context, req *agent.RequestContext) (string, error) {
 	sections := make([]string, 0, 10)

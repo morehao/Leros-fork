@@ -11,7 +11,7 @@ import (
 //
 // 架构：
 //
-//	Manager.Create/Patch/WriteFile/RemoveFile
+//	Manager.Create/Patch/Edit/Delete/WriteFile/RemoveFile
 //	  → SkillStore 写入 .leros/skills
 //	  → after() 构建 Mutation
 //	  → MutationHandler.Handle()
@@ -75,6 +75,24 @@ func (m *Manager) RemoveFile(ctx context.Context, req skillstore.RemoveFileReque
 	return result, err
 }
 
+func (m *Manager) Edit(ctx context.Context, req skillstore.EditRequest) (*skillstore.Result, error) {
+	if err := m.validate(); err != nil {
+		return nil, err
+	}
+	result, err := m.store.Edit(ctx, req)
+	m.after(result, err)
+	return result, err
+}
+
+func (m *Manager) Delete(ctx context.Context, req skillstore.DeleteRequest) (*skillstore.Result, error) {
+	if err := m.validate(); err != nil {
+		return nil, err
+	}
+	result, err := m.store.Delete(ctx, req)
+	m.after(result, err)
+	return result, err
+}
+
 func (m *Manager) validate() error {
 	if m == nil || m.store == nil {
 		return fmt.Errorf("skill manager is not initialized")
@@ -103,11 +121,14 @@ func (m *Manager) after(result *skillstore.Result, err error) {
 
 // actionToMutationKind 将 Store 的 action 字符串映射为 MutationKind。
 // create → MutationCreate（触发投影）
-// patch / write_file / remove_file → MutationModify（仅 catalog reload）
+// patch / edit / write_file / remove_file → MutationModify（仅 catalog reload）
+// delete → MutationDelete
 func actionToMutationKind(action string) SkillMutationKind {
 	switch action {
 	case skillstore.ActionCreate:
 		return MutationCreate
+	case skillstore.ActionDelete:
+		return MutationDelete
 	default:
 		return MutationModify
 	}

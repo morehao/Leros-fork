@@ -24,6 +24,8 @@ const (
 
 	ActionCreate     = "create"
 	ActionPatch      = "patch"
+	ActionEdit       = "edit"
+	ActionDelete     = "delete"
 	ActionWriteFile  = "write_file"
 	ActionRemoveFile = "remove_file"
 )
@@ -60,6 +62,15 @@ type CreateRequest struct {
 	Content string
 }
 
+// InstallRequest 表示安装一个完整 Skill 的请求（SKILL.md + 附属文件）。
+// 先在临时目录中组装，再整体移动到最终位置。
+type InstallRequest struct {
+	Name    string
+	Content string            // SKILL.md 内容
+	Files   map[string]string // 附属文件：相对路径 → 内容
+	Force   bool              // 是否覆盖已有 skill
+}
+
 // PatchRequest 表示替换 SKILL.md 或 supporting file 中文本的请求。
 type PatchRequest struct {
 	Name       string
@@ -80,6 +91,17 @@ type WriteFileRequest struct {
 type RemoveFileRequest struct {
 	Name     string
 	FilePath string
+}
+
+// EditRequest 表示完整替换已有 Skill 的 SKILL.md 内容的请求。
+type EditRequest struct {
+	Name    string
+	Content string
+}
+
+// DeleteRequest 表示删除整个 Skill 目录的请求。
+type DeleteRequest struct {
+	Name string
 }
 
 // DefaultSkillRoot 返回默认 workspace skills 目录。
@@ -149,6 +171,91 @@ func (s *SkillStore) Create(ctx context.Context, req CreateRequest) (*Result, er
 		Action:  ActionCreate,
 		Name:    name,
 		Message: fmt.Sprintf("Skill %q created.", name),
+		Path:    skillDir,
+	}
+	return result, nil
+}
+
+// Install 将完整 Skill（SKILL.md + 附属文件）先写入临时目录，验证后整体移动到最终位置。
+func (s *SkillStore) Install(ctx context.Context, req InstallRequest) (*Result, error) {
+	if err := ctxErr(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.validate(); err != nil {
+		return nil, err
+	}
+
+	name := strings.TrimSpace(req.Name)
+	content := strings.TrimSpace(req.Content)
+	if err := validateName(name, "skill name"); err != nil {
+		return nil, err
+	}
+	if err := validateSkillDocument(content); err != nil {
+		return nil, err
+	}
+
+	// 预先校验所有附属文件路径和内容。
+	for relPath, fileContent := range req.Files {
+		if err := validateSupportingFilePath(relPath); err != nil {
+			return nil, fmt.Errorf("file %q: %w", relPath, err)
+		}
+		if err := validateSupportingFileContent(relPath, fileContent); err != nil {
+			return nil, err
+		}
+	}
+
+	skillDir := filepath.Join(s.rootDir, name)
+
+	// 检查目标是否已存在。
+	if existing, err := s.Find(ctx, name); err == nil && existing != nil {
+		if !req.Force {
+			return failure(ActionCreate, name, fmt.Sprintf("skill %q already exists at %s", name, existing.Path)), nil
+		}
+	}
+
+	// 在 skill root 下创建临时目录，确保与目标在同一文件系统（rename 原子操作）。
+	if err := os.MkdirAll(s.rootDir, 0o755); err != nil {
+		return nil, fmt.Errorf("ensure skill root: %w", err)
+	}
+	tmpDir, err := os.MkdirTemp(s.rootDir, ".leros-install-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// 写入 SKILL.md 到临时目录。
+	if err := atomicWrite(filepath.Join(tmpDir, skillFileName), content); err != nil {
+		return nil, fmt.Errorf("stage SKILL.md: %w", err)
+	}
+
+	// 写入附属文件到临时目录。
+	for relPath, fileContent := range req.Files {
+		destPath, err := resolveInside(tmpDir, relPath)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %q: %w", relPath, err)
+		}
+		if err := atomicWrite(destPath, fileContent); err != nil {
+			return nil, fmt.Errorf("stage %q: %w", relPath, err)
+		}
+	}
+
+	// 强制覆盖时，先移除旧目录。
+	if req.Force {
+		if err := os.RemoveAll(skillDir); err != nil {
+			return nil, fmt.Errorf("remove existing skill: %w", err)
+		}
+	}
+
+	// 整体移动到最终位置。
+	if err := os.Rename(tmpDir, skillDir); err != nil {
+		return nil, fmt.Errorf("move skill to final location: %w", err)
+	}
+
+	result := &Result{
+		Success: true,
+		Action:  ActionCreate,
+		Name:    name,
+		Message: fmt.Sprintf("Skill %q installed.", name),
 		Path:    skillDir,
 	}
 	return result, nil
@@ -309,6 +416,77 @@ func (s *SkillStore) RemoveFile(ctx context.Context, req RemoveFileRequest) (*Re
 		Name:    name,
 		Message: fmt.Sprintf("File %q removed from skill %q.", req.FilePath, name),
 		Path:    targetPath,
+	}
+	return result, nil
+}
+
+// Edit 完全替换已有 Skill 的 SKILL.md 内容。
+func (s *SkillStore) Edit(ctx context.Context, req EditRequest) (*Result, error) {
+	if err := ctxErr(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.validate(); err != nil {
+		return nil, err
+	}
+
+	name := strings.TrimSpace(req.Name)
+	content := strings.TrimSpace(req.Content)
+	if err := validateName(name, "skill name"); err != nil {
+		return nil, err
+	}
+	if err := validateSkillDocument(content); err != nil {
+		return nil, err
+	}
+
+	skill, err := s.Find(ctx, name)
+	if err != nil {
+		return failure(ActionEdit, name, err.Error()), nil
+	}
+
+	skillPath := filepath.Join(skill.Path, skillFileName)
+	if err := atomicWrite(skillPath, content); err != nil {
+		return nil, err
+	}
+
+	result := &Result{
+		Success: true,
+		Action:  ActionEdit,
+		Name:    name,
+		Message: fmt.Sprintf("Skill %q updated.", name),
+		Path:    skill.Path,
+	}
+	return result, nil
+}
+
+// Delete 删除整个 Skill 目录。
+func (s *SkillStore) Delete(ctx context.Context, req DeleteRequest) (*Result, error) {
+	if err := ctxErr(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.validate(); err != nil {
+		return nil, err
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if err := validateName(name, "skill name"); err != nil {
+		return nil, err
+	}
+
+	skill, err := s.Find(ctx, name)
+	if err != nil {
+		return failure(ActionDelete, name, err.Error()), nil
+	}
+
+	if err := os.RemoveAll(skill.Path); err != nil {
+		return nil, fmt.Errorf("delete skill dir: %w", err)
+	}
+
+	result := &Result{
+		Success: true,
+		Action:  ActionDelete,
+		Name:    name,
+		Message: fmt.Sprintf("Skill %q deleted.", name),
+		Path:    skill.Path,
 	}
 	return result, nil
 }

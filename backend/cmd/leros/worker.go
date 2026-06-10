@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,63 +24,103 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/ygpkg/yg-go/lifecycle"
 	"github.com/ygpkg/yg-go/logs"
+	"gopkg.in/yaml.v2"
 )
 
 var (
-	workerConfigPath     string
-	workerServerAddr     string
 	workerDefaultRuntime string
 	workerListenAddr     string
 	workerWorkerID       uint
 	workerWorkspaceRoot  string
 )
 
-var workerCmd = &cobra.Command{
-	Use:   "worker",
-	Short: "Start the Leros background worker",
-	Long:  `Start the background worker service for processing asynchronous tasks and events.`,
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		if workerWorkerID == 0 {
-			return fmt.Errorf("worker-id is required")
-		}
-		return nil
-	},
-	Run: func(cmd *cobra.Command, args []string) {
-		runTaskWorker(workerDefaultRuntime)
-	},
+func newWorkerCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "worker",
+		Short: "Start the Leros background worker",
+		Long:  `Start the background worker service for processing asynchronous tasks and events.`,
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			runTaskWorker(workerDefaultRuntime)
+		},
+	}
+
+	cmd.PersistentFlags().StringVar(&workerListenAddr, "listen-addr", ":8081", "Worker HTTP server listen address (MCP + model router)")
+	cmd.PersistentFlags().UintVar(&workerWorkerID, "worker-id", 0, "Worker ID (overrides config file)")
+	cmd.PersistentFlags().StringVar(&workerWorkspaceRoot, "workspace-root", "", "Worker workspace root (overrides config file)")
+	cmd.PersistentFlags().StringVar(&workerDefaultRuntime, "default-runtime", "", "Default agent runtime kind, for example leros, claude, or codex")
+	cmd.AddCommand(newCodexWorkerCommand())
+	cmd.AddCommand(newClaudeWorkerCommand())
+	return cmd
 }
 
-func init() {
-	workerCmd.PersistentFlags().StringVar(&workerConfigPath, "config", "", "Configuration file path")
-	workerCmd.PersistentFlags().StringVar(&workerServerAddr, "server-addr", "127.0.0.1:8080", "Server address for WebSocket connection")
-	workerCmd.PersistentFlags().StringVar(&workerListenAddr, "listen-addr", ":8081", "Worker HTTP server listen address (MCP + model router)")
-	workerCmd.PersistentFlags().UintVar(&workerWorkerID, "worker-id", 0, "Worker ID for configuration retrieval")
-	workerCmd.PersistentFlags().StringVar(&workerWorkspaceRoot, "workspace-root", "", "Default worker workspace root")
-	workerCmd.PersistentFlags().StringVar(&workerDefaultRuntime, "default-runtime", "", "Default agent runtime kind, for example leros, claude, or codex")
-	rootCmd.AddCommand(workerCmd)
+func newClaudeWorkerCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "claude",
+		Short: "Start a standalone task worker backed by the Claude runtime",
+		Long:  `Start a standalone Leros worker that subscribes to org.{org_id}.worker.{worker_id}.task and executes agent.run tasks through the Claude agent runtime.`,
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			runTaskWorker(engines.EngineClaude)
+		},
+	}
+}
+
+func newCodexWorkerCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "codex",
+		Short: "Start a standalone task worker backed by the Codex runtime",
+		Long:  `Start a standalone Leros worker that subscribes to org.{org_id}.worker.{worker_id}.task and executes agent.run tasks through the Codex agent runtime.`,
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			runTaskWorker(engines.EngineCodex)
+		},
+	}
 }
 
 func loadWorkerConfig() (*config.WorkerConfig, error) {
-	cfg := &config.WorkerConfig{}
-	if workerConfigPath != "" {
-		err := LoadYamlLocalFile(workerConfigPath, cfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load config from %s: %w", workerConfigPath, err)
-		}
+	cfg := cliConfig
+	if cfg == nil {
+		cfg = &config.WorkerConfig{}
 	}
+
 	if workerWorkerID != 0 {
 		cfg.WorkerID = workerWorkerID
-		logs.Infof("Using worker ID from flag: %d", workerWorkerID)
-	}
-	if strings.TrimSpace(workerServerAddr) != "" {
-		cfg.ServerAddr = workerServerAddr
-		logs.Infof("Using server address from flag: %s", workerServerAddr)
 	}
 	if strings.TrimSpace(workerWorkspaceRoot) != "" {
 		cfg.WorkspaceRoot = workerWorkspaceRoot
-		logs.Infof("Using workspace root from flag: %s", workerWorkspaceRoot)
 	}
 	return cfg, nil
+}
+
+func saveEffectiveConfig(cfg *config.WorkerConfig) {
+	if cfg == nil {
+		return
+	}
+	targetPath := defaultCLIConfigPath()
+
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		logs.Warnf("Cannot create CLI config dir %s: %v", dir, err)
+		return
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		logs.Warnf("Failed to marshal effective config: %v", err)
+		return
+	}
+
+	tmpPath := targetPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		logs.Warnf("Failed to write effective config to %s: %v", tmpPath, err)
+		return
+	}
+	if err := os.Rename(tmpPath, targetPath); err != nil {
+		logs.Warnf("Failed to rename %s -> %s: %v", tmpPath, targetPath, err)
+		return
+	}
+	logs.Infof("Effective config persisted to %s", targetPath)
 }
 
 func runTaskWorker(defaultRuntime string) {
@@ -92,9 +133,9 @@ func runTaskWorker(defaultRuntime string) {
 		logs.Fatalf("Invalid worker config: %v", err)
 		return
 	}
-	if err := applyWorkerWorkspaceRoot(cfg); err != nil {
-		logs.Fatalf("Invalid worker workspace config: %v", err)
-		return
+	go saveEffectiveConfig(cfg)
+	if strings.TrimSpace(workerWorkspaceRoot) != "" {
+		os.Setenv(leros.EnvWorkspaceRoot, workerWorkspaceRoot)
 	}
 	if _, err := leros.EnsureStateDir(); err != nil {
 		logs.Fatalf("Failed to ensure state dir: %v", err)
@@ -179,9 +220,9 @@ func runTaskWorker(defaultRuntime string) {
 	}
 
 	consumer, err := taskconsumer.New(taskconsumer.Config{
-		OrgID:           cfg.OrgID,
-		WorkerID:        cfg.WorkerID,
-		SeqTrackerPath:  seqTrackerPath,
+		OrgID:          cfg.OrgID,
+		WorkerID:       cfg.WorkerID,
+		SeqTrackerPath: seqTrackerPath,
 	}, bus, bus, runtimeService)
 	if err != nil {
 		cancel()
@@ -237,20 +278,6 @@ func validateTaskWorkerConfig(cfg *config.WorkerConfig) error {
 	return nil
 }
 
-func applyWorkerWorkspaceRoot(cfg *config.WorkerConfig) error {
-	if cfg == nil {
-		return fmt.Errorf("config is required")
-	}
-	root := strings.TrimSpace(cfg.WorkspaceRoot)
-	if root == "" {
-		return nil
-	}
-	if err := os.Setenv(leros.EnvWorkspaceRoot, root); err != nil {
-		return fmt.Errorf("set %s: %w", leros.EnvWorkspaceRoot, err)
-	}
-	logs.Infof("Using workspace root from config: %s", root)
-	return nil
-}
 
 func startWorkerHTTPServer(addr string) (*http.Server, error) {
 	if strings.TrimSpace(addr) == "" {

@@ -8,7 +8,8 @@ type SkillMutationKind int
 
 const (
 	MutationCreate SkillMutationKind = iota // 创建新 skill 目录
-	MutationModify                          // patch / write_file / remove_file
+	MutationModify                          // patch / edit / write_file / remove_file
+	MutationDelete                          // delete 删除整个 skill 目录
 )
 
 // Mutation 表示一次已完成的 skill 变更结果。
