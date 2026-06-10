@@ -67,7 +67,7 @@ func (s *artifactService) GetArtifactDownload(ctx context.Context, artifactPubli
 	if artifact == nil {
 		return nil, errors.New("artifact not found")
 	}
-	file, err := agentworkspace.OpenArtifactStorageFile(artifact.OrgID, artifactWorkerID(artifact), artifact.StorageKey)
+	reader, err := agentworkspace.OpenArtifactStorageFile(ctx, artifact.OrgID, artifactWorkerID(artifact), artifact.StorageKey)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (s *artifactService) GetArtifactDownload(ctx context.Context, artifactPubli
 		FileName: artifactDownloadName(artifact),
 		MimeType: artifact.MimeType,
 		Size:     artifact.FileSize,
-		Reader:   file,
+		Reader:   reader,
 	}, nil
 }
 

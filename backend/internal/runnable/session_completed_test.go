@@ -13,6 +13,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/insmtx/Leros/backend/internal/api/contract"
+	"github.com/insmtx/Leros/backend/config"
+	"github.com/insmtx/Leros/backend/internal/infra/storage"
 	"github.com/insmtx/Leros/backend/internal/runtime/events"
 	"github.com/insmtx/Leros/backend/internal/worker/protocol"
 	"github.com/insmtx/Leros/backend/pkg/leros"
@@ -180,12 +182,21 @@ func TestHandleSessionArtifactDeclaredMessagePersistsArtifactFromWorkerStorage(t
 	}
 	root := t.TempDir()
 	t.Setenv(leros.EnvWorkspaceRoot, root)
+
+	if err := storage.Init(&config.StorageConfig{
+		Driver:   "local",
+		LocalDir: root,
+		Bucket:   "bucket",
+	}); err != nil {
+		t.Fatalf("init local storage: %v", err)
+	}
+
 	storageKey := "projects/7/prj/repo/report.md"
-	path := filepath.Join(root, "7", "3", "workspace", filepath.FromSlash(storageKey))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	driverFilePath := filepath.Join(root, "data", "bucket", filepath.FromSlash(storageKey))
+	if err := os.MkdirAll(filepath.Dir(driverFilePath), 0o755); err != nil {
 		t.Fatalf("create artifact dir: %v", err)
 	}
-	if err := os.WriteFile(path, []byte("hello artifact"), 0o644); err != nil {
+	if err := os.WriteFile(driverFilePath, []byte("hello artifact"), 0o644); err != nil {
 		t.Fatalf("write artifact: %v", err)
 	}
 	streamMsg := protocol.MessageStreamMessage{

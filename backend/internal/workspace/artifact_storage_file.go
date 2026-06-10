@@ -3,12 +3,14 @@ package workspace
 import (
 	"context"
 	"fmt"
-	"os"
+	"io"
+	"mime"
 	"path/filepath"
 	"strings"
+
+	appstorage "github.com/insmtx/Leros/backend/internal/infra/storage"
 )
 
-// ArtifactStorageFile 描述从 worker 存储解析的产物文件。
 type ArtifactStorageFile struct {
 	Path     string
 	Filename string
@@ -17,49 +19,39 @@ type ArtifactStorageFile struct {
 	Sha256   string
 }
 
-// ResolveArtifactStorageFile 从 worker 存储解析并检查单个产物文件。
 func ResolveArtifactStorageFile(ctx context.Context, orgID uint, workerID uint, storageKey string, declaredMimeType string) (*ArtifactStorageFile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	path, err := ArtifactStoragePath(orgID, workerID, storageKey)
+
+	st := appstorage.Get()
+	bucket := appstorage.DefaultBucket()
+
+	info, err := st.HeadObject(ctx, bucket, storageKey)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("head artifact object: %w", err)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, fmt.Errorf("stat artifact file: %w", err)
-	}
-	if info.IsDir() {
-		return nil, fmt.Errorf("artifact storage key points to a directory")
-	}
-	sha, err := sha256File(path)
-	if err != nil {
-		return nil, err
-	}
+
 	return &ArtifactStorageFile{
-		Path:     path,
-		Filename: filepath.Base(path),
-		MimeType: detectMimeType(path, declaredMimeType),
-		FileSize: info.Size(),
-		Sha256:   sha,
+		Path:     info.Path.Path(),
+		Filename: filepath.Base(info.Path.Key()),
+		MimeType: detectMimeTypeFromKey(info.Path.Key(), declaredMimeType),
+		FileSize: info.Size,
+		Sha256:   info.ETag,
 	}, nil
 }
 
-// OpenArtifactStorageFile 从 worker 存储打开单个产物文件。
-func OpenArtifactStorageFile(orgID uint, workerID uint, storageKey string) (*os.File, error) {
-	path, err := ArtifactStoragePath(orgID, workerID, storageKey)
+func OpenArtifactStorageFile(ctx context.Context, orgID uint, workerID uint, storageKey string) (io.ReadCloser, error) {
+	st := appstorage.Get()
+	bucket := appstorage.DefaultBucket()
+
+	result, err := st.GetObject(ctx, bucket, storageKey)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get artifact object: %w", err)
 	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open artifact file: %w", err)
-	}
-	return file, nil
+	return result.Body, nil
 }
 
-// RepoRelativePathFromStorageKey 返回已知工作区存储键的仓库相对路径。
 func RepoRelativePathFromStorageKey(storageKey string) string {
 	key := filepath.ToSlash(strings.TrimSpace(storageKey))
 	const marker = "/repo/"
@@ -68,4 +60,30 @@ func RepoRelativePathFromStorageKey(storageKey string) string {
 		return ""
 	}
 	return strings.TrimPrefix(key[idx+len(marker):], "/")
+}
+
+func detectMimeTypeFromKey(key, declared string) string {
+	if strings.TrimSpace(declared) != "" {
+		return normalizeMimeType(declared)
+	}
+	if ext := filepath.Ext(key); ext != "" {
+		if value := mime.TypeByExtension(ext); value != "" {
+			return normalizeMimeType(value)
+		}
+	}
+	return ""
+}
+
+func normalizeMimeType(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if mediaType, _, err := mime.ParseMediaType(value); err == nil {
+		return mediaType
+	}
+	if index := strings.Index(value, ";"); index >= 0 {
+		return strings.TrimSpace(value[:index])
+	}
+	return value
 }
