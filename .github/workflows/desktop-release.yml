@@ -26,9 +26,6 @@ jobs:
           - name: win-x64
             os: windows-latest
             command: dist:desktop:win:x64
-          - name: linux-x64
-            os: ubuntu-latest
-            command: dist:desktop:linux:x64
 
     steps:
       - name: Checkout repository
@@ -115,10 +112,7 @@ jobs:
           if-no-files-found: error
           path: |
             frontend/apps/desktop/dist/*.dmg
-            frontend/apps/desktop/dist/*.zip
             frontend/apps/desktop/dist/*.exe
-            frontend/apps/desktop/dist/*.AppImage
-            frontend/apps/desktop/dist/*.deb
 
   upload-cos:
     name: Upload Assets to Tencent COS
@@ -177,8 +171,8 @@ jobs:
             --endpoint "cos.${COS_REGION}.myqcloud.com" \
             --protocol https \
             --bucket-type COS \
-            --routines 4 \
-            --thread-num 8 \
+            --routines 6 \
+            --thread-num 12 \
             --part-size 16 \
             --err-retry-num 5 \
             --process-log=false \
@@ -200,15 +194,26 @@ jobs:
               latest_basename="${basename_without_extension}-latest"
             fi
 
-            cp "$asset" "latest-assets/${latest_basename}.${extension}"
+            latest_filename="${latest_basename}.${extension}"
+            sha256sum "$asset" | awk -v filename="$latest_filename" '{ print $1 "  " filename }' >> latest-assets/SHA256SUMS.txt
+
+            coscli cp \
+              "cos://${COS_BUCKET}/${COS_PREFIX}/${release_dir}/${filename}" \
+              "cos://${COS_BUCKET}/${COS_PREFIX}/${latest_filename}" \
+              --force \
+              --init-skip \
+              --secret-id "${COS_SECRET_ID}" \
+              --secret-key "${COS_SECRET_KEY}" \
+              --endpoint "cos.${COS_REGION}.myqcloud.com" \
+              --protocol https \
+              --bucket-type COS \
+              --err-retry-num 5 \
+              --process-log=false \
+              --fail-output=false \
+              --disable-log
           done
 
-          cd latest-assets
-          find . -type f ! -name "SHA256SUMS.txt" -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
-          cd -
-
-          coscli sync latest-assets/ "cos://${COS_BUCKET}/${COS_PREFIX}/" \
-            --recursive \
+          coscli cp latest-assets/SHA256SUMS.txt "cos://${COS_BUCKET}/${COS_PREFIX}/SHA256SUMS.txt" \
             --force \
             --init-skip \
             --secret-id "${COS_SECRET_ID}" \
@@ -216,9 +221,6 @@ jobs:
             --endpoint "cos.${COS_REGION}.myqcloud.com" \
             --protocol https \
             --bucket-type COS \
-            --routines 4 \
-            --thread-num 8 \
-            --part-size 16 \
             --err-retry-num 5 \
             --process-log=false \
             --fail-output=false \
