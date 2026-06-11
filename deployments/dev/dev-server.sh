@@ -52,4 +52,4 @@ fi
 echo -e "${BLUE}Starting server (port 8080)...${NC}"
 
 cd "$ROOT_DIR"
-LEROS_DEV=true ./bundles/leros server --config "$CONFIG_FILE"
+LEROS_DEV=true ./bundles/leros server --config "$CONFIG_FILE" --workspace-root "$ROOT_DIR/.leros-workspace" --listen-addr :8080
