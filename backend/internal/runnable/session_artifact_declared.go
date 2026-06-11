@@ -1,15 +1,18 @@
 package runnable
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/nats-io/nats.go"
+	"github.com/ygpkg/storage-go"
 	"gorm.io/gorm"
 
 	infradb "github.com/insmtx/Leros/backend/internal/infra/db"
+	"github.com/insmtx/Leros/backend/internal/infra/filestore"
 	eventbus "github.com/insmtx/Leros/backend/internal/infra/mq"
 	"github.com/insmtx/Leros/backend/internal/runtime/events"
 	"github.com/insmtx/Leros/backend/internal/worker/protocol"
@@ -105,10 +108,22 @@ func (p *declaredArtifactPersister) PersistDeclaredArtifact(ctx context.Context,
 		return fmt.Errorf("session task_id is required for artifact persistence")
 	}
 
+	// TODO: 后续改为从远程地址下载产物文件，当前从本地文件系统读取
 	fileInfo, err := agentworkspace.ResolveArtifactStorageFile(ctx, route.OrgID, route.WorkerID, storageKey, item.MimeType)
 	if err != nil {
 		return err
 	}
+	rawStorageKey := storageKey
+
+	st := filestore.GetStorage()
+	bucket := filestore.DefaultBucket()
+	putResult, err := st.PutObject(ctx, bucket, rawStorageKey, bytes.NewReader(fileInfo.Data),
+		storage.WithContentType(fileInfo.MimeType),
+	)
+	if err != nil {
+		return fmt.Errorf("put artifact object: %w", err)
+	}
+	storageKey = putResult.Path.URI()
 	filename := strings.TrimSpace(item.Filename)
 	if filename == "" {
 		filename = fileInfo.Filename
@@ -134,7 +149,8 @@ func (p *declaredArtifactPersister) PersistDeclaredArtifact(ctx context.Context,
 		Status:       artifactStatus(item.Status),
 		Metadata: types.ObjectMetadata{
 			Extra: map[string]interface{}{
-				"worker_id": route.WorkerID,
+				"worker_id":        route.WorkerID,
+				"storage_key_raw":  rawStorageKey,
 			},
 		},
 	}

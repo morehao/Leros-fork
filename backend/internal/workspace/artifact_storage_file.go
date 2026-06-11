@@ -19,6 +19,7 @@ type ArtifactStorageFile struct {
 	MimeType string
 	FileSize int64
 	Sha256   string
+	Data     []byte
 }
 
 func ResolveArtifactStorageFile(ctx context.Context, orgID uint, workerID uint, storageKey string, declaredMimeType string) (*ArtifactStorageFile, error) {
@@ -49,6 +50,7 @@ func ResolveArtifactStorageFile(ctx context.Context, orgID uint, workerID uint, 
 		MimeType: detectMimeTypeFromKey(result.Path.Key(), declaredMimeType),
 		FileSize: result.Size,
 		Sha256:   sha256Hex,
+		Data:     data,
 	}, nil
 }
 

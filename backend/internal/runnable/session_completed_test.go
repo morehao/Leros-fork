@@ -239,11 +239,14 @@ func TestHandleSessionArtifactDeclaredMessagePersistsArtifactFromWorkerStorage(t
 	if artifact.SessionID == nil || *artifact.SessionID != session.ID {
 		t.Fatalf("expected artifact session id %d, got %#v", session.ID, artifact.SessionID)
 	}
-	if artifact.StorageKey != storageKey || artifact.FileURL == "" || artifact.FileSize != int64(len("hello artifact")) || artifact.Sha256 == "" {
+	if artifact.StorageKey != "file://bucket/"+storageKey || artifact.FileURL == "" || artifact.FileSize != int64(len("hello artifact")) || artifact.Sha256 == "" {
 		t.Fatalf("unexpected artifact storage fields: %#v", artifact)
 	}
 	if artifact.Metadata.Extra["worker_id"] == nil {
 		t.Fatalf("expected worker_id metadata, got %#v", artifact.Metadata)
+	}
+	if artifact.Metadata.Extra["storage_key_raw"] != storageKey {
+		t.Fatalf("expected storage_key_raw %q, got %#v", storageKey, artifact.Metadata)
 	}
 }
 

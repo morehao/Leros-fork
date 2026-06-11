@@ -67,7 +67,7 @@ func (s *artifactService) GetArtifactDownload(ctx context.Context, artifactPubli
 	if artifact == nil {
 		return nil, errors.New("artifact not found")
 	}
-	reader, err := agentworkspace.OpenArtifactStorageFile(ctx, artifact.OrgID, artifactWorkerID(artifact), artifact.StorageKey)
+	reader, err := agentworkspace.OpenArtifactStorageFile(ctx, artifact.OrgID, artifactWorkerID(artifact), artifactStorageKey(artifact))
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +140,20 @@ func artifactWorkerID(artifact *types.Artifact) uint {
 		}
 	}
 	return defaultArtifactWorkerID
+}
+
+func artifactStorageKey(artifact *types.Artifact) string {
+	if artifact == nil {
+		return ""
+	}
+	if artifact.Metadata.Extra != nil {
+		if raw, ok := artifact.Metadata.Extra["storage_key_raw"]; ok {
+			if s, ok := raw.(string); ok && strings.TrimSpace(s) != "" {
+				return s
+			}
+		}
+	}
+	return artifact.StorageKey
 }
 
 var _ contract.ArtifactService = (*artifactService)(nil)
