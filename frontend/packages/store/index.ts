@@ -15,6 +15,12 @@ export {
 	projectFileApi,
 } from "./api/projectFileApi";
 export { sessionApi } from "./api/sessionApi";
+export type {
+	SearchSkillMarketplaceParams,
+	SearchSkillMarketplaceResponse,
+	SkillMarketplaceItem,
+} from "./api/skillMarketplaceApi";
+export { skillMarketplaceApi } from "./api/skillMarketplaceApi";
 export type { AppAction, AppStore } from "./appStore";
 export {
 	useAppStore,
