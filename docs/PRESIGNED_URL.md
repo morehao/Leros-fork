@@ -152,9 +152,17 @@ Body 模式说明：
 
 **成功响应 (200)：**
 
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "uri": "file://dev-bucket/hello.txt"
+  }
+}
 ```
-uploaded
-```
+
+- `data.uri`：存储对象的 URI 标识，格式为 `{scheme}://{bucket}/{key}`（local 驱动为 `file://`，S3 驱动为 `s3://`）
 
 ---
 
@@ -211,25 +219,26 @@ curl "<PRESIGNED_URL>" -o result.txt
 
 **生成阶段（/v1/static/*）：**
 
-| HTTP 状态码 | Body                                        | 触发条件              |
-| ----------- | ------------------------------------------- | --------------------- |
-| 401         | `{"error":"unauthorized"}`                  | 鉴权失败（JWT 无效且 API Key 不匹配） |
-| 400         | `missing presign query parameter`           | 未携带 `presign` 参数 |
-| 400         | `bucket and key are required`               | bucket 或 key 为空    |
-| 500         | `failed to generate presigned upload URL`   | storage 层生成失败    |
-| 500         | `failed to generate presigned download URL` | storage 层生成失败    |
+| HTTP 状态码 | Body                                          | 触发条件              |
+| ----------- | --------------------------------------------- | --------------------- |
+| 401         | `{"error":"unauthorized"}`                    | 鉴权失败（JWT 无效且 API Key 不匹配） |
+| 400         | `missing presign query parameter`             | 未携带 `presign` 参数 |
+| 400         | `bucket and key are required`                 | bucket 或 key 为空    |
+| 500         | `failed to generate presigned upload URL`     | storage 层生成失败    |
+| 500         | `failed to generate presigned download URL`   | storage 层生成失败    |
 
 **消费阶段（/:bucket/*key）：**
 
-| HTTP 状态码 | Body                          | 触发条件                  |
-| ----------- | ----------------------------- | ------------------------- |
-| 400         | `missing token or expires query parameter` | 未携带 token 或 expires   |
-| 400         | `bucket and key are required` | bucket 或 key 为空        |
-| 403         | `presigned url expired`       | token 已过期              |
-| 403         | `operation mismatch`          | 用 PUT 的 token 做 GET 或反之 |
-| 403         | `invalid presigned token`     | token 签名验证失败        |
-| 404         | `object not found`            | 文件不存在                |
-| 500         | `upload failed: ...`          | storage 写入失败          |
+| HTTP 状态码 | Body                                          | 触发条件                  |
+| ----------- | --------------------------------------------- | ------------------------- |
+| 400         | `{"code":40001,"message":"missing token or expires query parameter"}` | 未携带 token 或 expires   |
+| 400         | `{"code":40001,"message":"bucket and key are required"}` | bucket 或 key 为空        |
+| 403         | `{"code":50001,"message":"presigned url expired"}` | token 已过期              |
+| 403         | `{"code":50001,"message":"operation mismatch"}` | 用 PUT 的 token 做 GET 或反之 |
+| 403         | `{"code":50001,"message":"key mismatch"}`      | key 不匹配                |
+| 403         | `{"code":50001,"message":"invalid presigned token"}` | token 签名验证失败        |
+| 404         | `{"code":50001,"message":"object not found"}`  | 文件不存在                |
+| 500         | `{"code":50001,"message":"upload failed: ..."}`| storage 写入失败          |
 
 ---
 
@@ -262,7 +271,7 @@ echo "logo content" > /tmp/logo.png
 
 # 用步骤 1 返回的完整 URL 替换 <PRESIGNED_URL>
 curl -X PUT "<PRESIGNED_URL>" --data-binary @/tmp/logo.png
-# 返回: uploaded
+# 返回: {"code":0,"message":"success","data":{"uri":"file://dev-bucket/projects/123/assets/logo.png"}}
 ```
 
 Postman 配置：
