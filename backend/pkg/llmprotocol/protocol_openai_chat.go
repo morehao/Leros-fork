@@ -41,6 +41,15 @@ func (a *openAIChatAdapter) DecodeRequest(raw map[string]interface{}) (*IRReques
 	if p, ok := getFloat(raw, "top_p"); ok {
 		ir.TopP = &p
 	}
+	if k, ok := getInt(raw, "top_k"); ok {
+		ir.TopK = &k
+	}
+	if fp, ok := getFloat(raw, "frequency_penalty"); ok {
+		ir.FrequencyPenalty = &fp
+	}
+	if pp, ok := getFloat(raw, "presence_penalty"); ok {
+		ir.PresencePenalty = &pp
+	}
 	if mt, ok := getInt(raw, "max_tokens"); ok {
 		ir.MaxTokens = mt
 	}
@@ -54,6 +63,18 @@ func (a *openAIChatAdapter) DecodeRequest(raw map[string]interface{}) (*IRReques
 	}
 	if s, ok := getInt(raw, "seed"); ok {
 		ir.Seed = &s
+	}
+	if b, ok := raw["parallel_tool_calls"].(bool); ok {
+		ir.ParallelToolCalls = &b
+	}
+	if streamOptions, ok := raw["stream_options"].(map[string]interface{}); ok {
+		ir.StreamOptions = streamOptions
+	}
+	if metadata, ok := raw["metadata"].(map[string]interface{}); ok {
+		ir.Metadata = metadata
+	}
+	if b, ok := raw["store"].(bool); ok {
+		ir.Store = &b
 	}
 	ir.User = getString(raw, "user")
 	ir.ReasoningEffort = getString(raw, "reasoning_effort")
@@ -81,8 +102,10 @@ func (a *openAIChatAdapter) DecodeRequest(raw map[string]interface{}) (*IRReques
 	for k, v := range raw {
 		switch k {
 		case "model", "messages", "stream", "temperature", "top_p",
-			"max_tokens", "max_completion_tokens", "stop", "tools",
-			"tool_choice", "seed", "user", "reasoning_effort", "response_format":
+			"top_k", "frequency_penalty", "presence_penalty", "max_tokens",
+			"max_completion_tokens", "stop", "tools", "tool_choice", "seed",
+			"user", "reasoning_effort", "response_format", "parallel_tool_calls",
+			"stream_options", "metadata", "store":
 			// handled above
 		default:
 			preserved[k] = v
@@ -129,6 +152,15 @@ func (a *openAIChatAdapter) encodeRequestBody(ir *IRRequest) map[string]interfac
 	if ir.TopP != nil {
 		body["top_p"] = *ir.TopP
 	}
+	if ir.TopK != nil {
+		body["top_k"] = *ir.TopK
+	}
+	if ir.FrequencyPenalty != nil {
+		body["frequency_penalty"] = *ir.FrequencyPenalty
+	}
+	if ir.PresencePenalty != nil {
+		body["presence_penalty"] = *ir.PresencePenalty
+	}
 	if ir.MaxTokens > 0 {
 		body["max_completion_tokens"] = ir.MaxTokens
 	}
@@ -137,6 +169,15 @@ func (a *openAIChatAdapter) encodeRequestBody(ir *IRRequest) map[string]interfac
 	}
 	if ir.Seed != nil {
 		body["seed"] = *ir.Seed
+	}
+	if ir.ParallelToolCalls != nil && *ir.ParallelToolCalls {
+		body["parallel_tool_calls"] = true
+	}
+	if len(ir.StreamOptions) > 0 {
+		body["stream_options"] = ir.StreamOptions
+	}
+	if len(ir.Metadata) > 0 {
+		body["metadata"] = ir.Metadata
 	}
 	if ir.User != "" {
 		body["user"] = ir.User
@@ -252,14 +293,7 @@ func (a *openAIChatAdapter) EncodeResponse(ir *IRResponse) (map[string]interface
 			// reasoning content typically not sent in chat completions response body
 		case IRPartToolCall:
 			if part.ToolCall != nil {
-				args := "{}"
-				if part.ToolCall.ArgumentsJSON != nil {
-					if b, err := marshalJSON(part.ToolCall.ArgumentsJSON); err == nil {
-						args = string(b)
-					}
-				} else if part.ToolCall.ArgumentsRaw != "" {
-					args = part.ToolCall.ArgumentsRaw
-				}
+				args := serializeChatToolCallArgs(part.ToolCall)
 				toolCalls = append(toolCalls, map[string]interface{}{
 					"id":   part.ToolCall.ID,
 					"type": "function",
@@ -744,7 +778,7 @@ func encodeOpenAIChatMessages(ir *IRRequest) []interface{} {
 		})
 	}
 
-	for _, m := range ir.Messages {
+	for _, m := range normalizeOpenAIChatMessageSequence(ir.Messages) {
 		if m.Role == IRRoleSystem {
 			continue // already emitted as system message above
 		}
@@ -765,13 +799,6 @@ func encodeOpenAIChatMessages(ir *IRRequest) []interface{} {
 		flushMessage := func() {
 			if len(toolCalls) > 0 {
 				em["tool_calls"] = toolCalls
-				if _, ok := em["content"]; !ok {
-					em["content"] = nil
-				}
-				// DeepSeek requires reasoning_content on every assistant tool-call message.
-				if reasoningContent == "" {
-					reasoningContent = " "
-				}
 			}
 			if reasoningContent != "" {
 				em["reasoning_content"] = reasoningContent
@@ -799,12 +826,7 @@ func encodeOpenAIChatMessages(ir *IRRequest) []interface{} {
 				hasContent = true
 			case IRPartToolCall:
 				if part.ToolCall != nil {
-					args := "{}"
-					if part.ToolCall.ArgumentsJSON != nil {
-						if b, err := marshalJSON(part.ToolCall.ArgumentsJSON); err == nil {
-							args = string(b)
-						}
-					}
+					args := serializeChatToolCallArgs(part.ToolCall)
 					toolCalls = append(toolCalls, map[string]interface{}{
 						"id":   part.ToolCall.ID,
 						"type": "function",
@@ -847,6 +869,52 @@ func encodeOpenAIChatMessages(ir *IRRequest) []interface{} {
 	}
 
 	return msgs
+}
+
+func normalizeOpenAIChatMessageSequence(messages []IRMessage) []IRMessage {
+	var normalized []IRMessage
+	for _, msg := range messages {
+		if canMergeAssistantToolCallMessage(msg) && len(normalized) > 0 {
+			lastIdx := len(normalized) - 1
+			if hasToolCallPart(normalized[lastIdx]) && normalized[lastIdx].Role == IRRoleAssistant {
+				normalized[lastIdx].Parts = append(normalized[lastIdx].Parts, msg.Parts...)
+				continue
+			}
+		}
+		normalized = append(normalized, msg)
+	}
+	return normalized
+}
+
+func canMergeAssistantToolCallMessage(msg IRMessage) bool {
+	if msg.Role != IRRoleAssistant {
+		return false
+	}
+	hasToolCall := false
+	for _, part := range msg.Parts {
+		switch part.Type {
+		case IRPartToolCall:
+			if part.ToolCall != nil {
+				hasToolCall = true
+			}
+		case IRPartReasoning:
+		default:
+			return false
+		}
+	}
+	return hasToolCall
+}
+
+func hasToolCallPart(msg IRMessage) bool {
+	if msg.Role != IRRoleAssistant {
+		return false
+	}
+	for _, part := range msg.Parts {
+		if part.Type == IRPartToolCall && part.ToolCall != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // =============================================================================
@@ -1023,18 +1091,11 @@ func ensureChatPrefix(id string) string {
 }
 
 // serializeChatToolCallArgs serializes tool call arguments for OpenAI Chat format.
-// Uses ArgumentsJSON if populated, falls back to ArgumentsRaw, defaults to "{}".
+// ArgumentsRaw is preferred so protocol conversion preserves the original
+// argument byte order when the source protocol already supplied a JSON string.
 func serializeChatToolCallArgs(tc *IRToolCallPart) string {
 	if tc == nil {
 		return "{}"
 	}
-	if tc.ArgumentsJSON != nil {
-		if b, err := marshalJSON(tc.ArgumentsJSON); err == nil {
-			return string(b)
-		}
-	}
-	if tc.ArgumentsRaw != "" {
-		return tc.ArgumentsRaw
-	}
-	return "{}"
+	return CanonicalToolArguments(tc.ArgumentsRaw, tc.ArgumentsJSON)
 }
