@@ -27,8 +27,11 @@ import {
 	Table2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import {
+	SHOW_ASSISTANT_MESSAGE_METRICS,
+	SHOW_ASSISTANT_MESSAGE_REGENERATE_BUTTON,
+} from "../../constants/temporaryUiFlags";
 import { MarkdownRenderer } from "../common/MarkdownRenderer";
-import { SHOW_ASSISTANT_MESSAGE_METRICS } from "../../constants/temporaryUiFlags";
 import { ArtifactPreviewDialog } from "../layout/ArtifactPreviewDialog";
 import { ToolCallBlock } from "./ToolCallBlock";
 
@@ -129,14 +132,16 @@ export function AIMessageBubble({
 						)}
 						<div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
 							<CopyButton text={content} />
-							<Button
-								variant="ghost"
-								size="icon-xs"
-								className="text-slate-400 hover:text-slate-600"
-								onClick={() => resendMessage(message.id)}
-							>
-								<RefreshCw className="size-3.5" />
-							</Button>
+							{SHOW_ASSISTANT_MESSAGE_REGENERATE_BUTTON && (
+								<Button
+									variant="ghost"
+									size="icon-xs"
+									className="text-slate-400 hover:text-slate-600"
+									onClick={() => resendMessage(message.id)}
+								>
+									<RefreshCw className="size-3.5" />
+								</Button>
+							)}
 						</div>
 					</div>
 				)}
