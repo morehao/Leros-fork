@@ -867,7 +867,8 @@ export class ChatActionImpl {
 	};
 
 	sendMessage = async (content: string, attachments?: Attachment[]) => {
-		if (!content.trim() && !attachments?.length) return;
+		// 仅上传附件而无文字时后端会报错，必须要求有文本内容
+		if (!content.trim()) return;
 
 		const state = this.#get();
 		let { activeSessionId } = state;
