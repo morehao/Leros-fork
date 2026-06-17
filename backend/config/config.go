@@ -73,5 +73,4 @@ type GiteaConfig struct {
 	Endpoint     string `yaml:"endpoint"`
 	AdminToken   string `yaml:"admin_token"`
 	DefaultOwner string `yaml:"default_owner"`
-	OrgPrefix    string `yaml:"org_prefix"`
 }

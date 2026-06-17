@@ -710,7 +710,7 @@ func generateProjectPublicID() string {
 }
 
 func (s *projectService) buildRepoName(orgID uint, projectPublicID string) string {
-	return fmt.Sprintf("%s-%s-%d-%s", s.giteaCfg.OrgPrefix, s.env, orgID, projectPublicID)
+	return fmt.Sprintf("%s-%d-%s", s.env, orgID, projectPublicID)
 }
 
 func (s *projectService) initRepoStructure(ctx context.Context, fullName string) {

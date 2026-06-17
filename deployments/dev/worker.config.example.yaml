@@ -19,4 +19,3 @@ gitea:
   endpoint: "<your_gitea_endpoint>"
   admin_token: "<your_admin_token>"
   default_owner: "admin"
-  org_prefix: "leros"

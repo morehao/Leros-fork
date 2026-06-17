@@ -379,7 +379,7 @@ func (c *Consumer) prepareWorkspace(ctx context.Context, taskMsg protocol.Worker
 	cloneURL := ""
 	if c.giteaClient != nil && c.giteaCfg != nil {
 		orgID := taskMsg.Route.OrgID
-		repoName := fmt.Sprintf("%s-%s-%d-%s", c.giteaCfg.OrgPrefix, c.cfg.Env, orgID, projectID)
+		repoName := fmt.Sprintf("%s-%d-%s", c.cfg.Env, orgID, projectID)
 		token, err := c.giteaClient.GenerateAccessToken(ctx,
 			c.giteaCfg.DefaultOwner,
 			fmt.Sprintf("leros-worker-%d-%s", c.cfg.WorkerID, taskMsg.Trace.TaskID),
