@@ -25,6 +25,7 @@ import type {
 	MessageArtifact,
 	MessageAttachment,
 	MessageMetadata,
+	MessageProcessStep,
 	MessageRole,
 	MessageUsage,
 	ModelOption,
@@ -102,6 +103,7 @@ function mapBackendMessage(msg: BackendMessage): Message {
 
 	let mapped = applySessionEventsToMessage(message, msg.chunks, {
 		appendContent: !message.content,
+		finalContent: message.content,
 	});
 	if (msg.artifacts?.length) {
 		const artifacts = msg.artifacts
@@ -337,6 +339,112 @@ function getRunResultMessage(payload: BackendSessionEventPayload): string | unde
 	if (!payload.result || typeof payload.result !== "object") return undefined;
 	const value = payload.result as { message?: unknown };
 	return typeof value.message === "string" ? value.message : undefined;
+}
+
+function getRunFailedMessage(payload: BackendSessionEventPayload): string | undefined {
+	if (typeof payload.error === "string" && payload.error.trim()) {
+		return payload.error;
+	}
+	return getRunResultMessage(payload);
+}
+
+function splitThinkingStepContent(content: string): string[] {
+	const normalized = content.replace(/\r\n/g, "\n");
+	const withStageBoundaries = normalized.replace(
+		/\n(?=(?:\*\*)?(?:下一步|接下来|现在|然后|最后|首先)[：:]?|#{1,6}\s)/g,
+		"\n\n",
+	);
+
+	return withStageBoundaries
+		.split(/\n{2,}/)
+		.map((segment) => segment.trim())
+		.filter(Boolean);
+}
+
+function createThinkingStepsFromContent(content: string, startIndex: number): MessageProcessStep[] {
+	const thinkingSegments = splitThinkingStepContent(content);
+	return thinkingSegments.map((segment, index) => ({
+		id: `thinking-${startIndex + index + 1}`,
+		type: "thinking" as const,
+		content: segment,
+	}));
+}
+
+function rebuildTrailingThinkingSteps(
+	steps: MessageProcessStep[] | undefined,
+	content: string,
+): MessageProcessStep[] {
+	const stableSteps = [...(steps ?? [])];
+	return [...stableSteps, ...createThinkingStepsFromContent(content, stableSteps.length)];
+}
+
+function appendProcessThinkingStep(
+	steps: MessageProcessStep[] | undefined,
+	delta: string,
+): MessageProcessStep[] {
+	if (!delta) return steps ?? [];
+
+	const next = [...(steps ?? [])];
+	const lastStep = next.at(-1);
+	if (lastStep?.type === "thinking") {
+		return rebuildTrailingThinkingSteps(next.slice(0, -1), lastStep.content + delta);
+	}
+
+	return rebuildTrailingThinkingSteps(next, delta);
+}
+
+function appendProcessToolCallStep(
+	steps: MessageProcessStep[] | undefined,
+	toolCallId: string,
+): MessageProcessStep[] {
+	if (!toolCallId) return steps ?? [];
+	if (steps?.some((step) => step.type === "tool_call" && step.toolCallId === toolCallId)) {
+		return steps;
+	}
+
+	return [
+		...(steps ?? []),
+		{
+			id: `tool-call-${toolCallId}`,
+			type: "tool_call",
+			toolCallId,
+		},
+	];
+}
+
+type ApplySessionEventOptions = {
+	appendContent: boolean;
+	finalContent?: string;
+};
+
+function shouldAppendMessageDeltaToProcess(
+	content: string,
+	options: ApplySessionEventOptions,
+): boolean {
+	const trimmedContent = content.trim();
+	if (!trimmedContent) return false;
+
+	const finalContent = options.finalContent?.trim();
+	if (!finalContent) return true;
+
+	// 历史消息里最终回答已在 content 字段，属于最终回答的 delta 不再放入执行过程。
+	return !finalContent.includes(trimmedContent);
+}
+
+function pruneFinalContentProcessSteps(
+	steps: MessageProcessStep[] | undefined,
+	finalContent: string | undefined,
+): MessageProcessStep[] | undefined {
+	const trimmedFinalContent = finalContent?.trim();
+	if (!steps?.length || !trimmedFinalContent) return steps;
+
+	const nextSteps = steps.filter((step) => {
+		if (step.type !== "thinking") return true;
+		const content = step.content.trim();
+		return !!content && !trimmedFinalContent.includes(content);
+	});
+
+	return nextSteps.length ? nextSteps : undefined;
 }
 
 function metadataFromPayload(payload: BackendSessionEventPayload): MessageMetadata | undefined {
@@ -615,7 +723,7 @@ function applySessionEventToMessage(
 	message: Message,
 	event: SessionEventLike,
 	eventType: string | undefined,
-	options: { appendContent: boolean },
+	options: ApplySessionEventOptions,
 ): Message {
 	const normalizedEvent = normalizeSessionEvent(event);
 	if (!normalizedEvent) return message;
@@ -675,13 +783,25 @@ function applySessionEventToMessage(
 		case "message.delta":
 		case "message.result": {
 			const content = getEventContent(normalizedEvent, payload);
-			if (!content || !options.appendContent) return message;
-			return { ...message, content: message.content + content };
+			if (!content) return message;
+
+			const shouldAppendProcessStep =
+				normalizedEventType === "message.delta" &&
+				shouldAppendMessageDeltaToProcess(content, options);
+			if (!shouldAppendProcessStep) return message;
+
+			return {
+				...message,
+				processSteps: appendProcessThinkingStep(message.processSteps, content),
+			};
 		}
 		case "reasoning.delta": {
 			const thinking = payload.thinking ?? getEventContent(normalizedEvent, payload);
 			if (!thinking) return message;
-			return { ...message, thinking: (message.thinking ?? "") + thinking };
+			return {
+				...message,
+				processSteps: appendProcessThinkingStep(message.processSteps, thinking),
+			};
 		}
 		case "tool_call.started":
 		case "tool_call.delta":
@@ -695,6 +815,7 @@ function applySessionEventToMessage(
 			return {
 				...message,
 				toolCalls: upsertToolCall(message.toolCalls, toolCall),
+				processSteps: appendProcessToolCallStep(message.processSteps, toolCall.id),
 			};
 		}
 		case "run.completed": {
@@ -706,16 +827,23 @@ function applySessionEventToMessage(
 				.filter((artifact): artifact is MessageArtifact => artifact !== undefined);
 			return enrichAssistantMessageMetrics({
 				...message,
-				content:
-					options.appendContent && !message.content && resultMessage
-						? resultMessage
-						: message.content,
+				content: options.appendContent && resultMessage ? resultMessage : message.content,
+				processSteps: pruneFinalContentProcessSteps(message.processSteps, resultMessage),
 				artifacts: artifacts?.length
 					? mergeArtifacts(message.artifacts, artifacts)
 					: message.artifacts,
 				metadata: metadata ? { ...message.metadata, ...metadata } : message.metadata,
 				usage: usage ?? message.usage,
 			});
+		}
+		case "run.failed": {
+			const failedMessage = getRunFailedMessage(payload);
+			if (!failedMessage) return message;
+			return {
+				...message,
+				// 中文注释：失败事件也要回填到当前 assistant 消息里，避免界面只剩空占位。
+				content: failedMessage,
+			};
 		}
 		default:
 			return message;
@@ -725,7 +853,7 @@ function applySessionEventToMessage(
 function applySessionEventsToMessage(
 	message: Message,
 	events: BackendMessageChunk[] | undefined,
-	options: { appendContent: boolean },
+	options: ApplySessionEventOptions,
 ): Message {
 	if (!events?.length) return message;
 	return events.reduce(
@@ -936,6 +1064,8 @@ export class ChatActionImpl {
 		if (!content.trim()) return;
 
 		const state = this.#get();
+		// 中文注释：生成中禁止再次发送，避免新的请求把上一条流式响应直接顶掉。
+		if (state.isGenerating) return;
 		let { activeSessionId } = state;
 
 		if (!activeSessionId) {
@@ -1020,6 +1150,7 @@ export class ChatActionImpl {
 	) => {
 		const trimmed = content.trim();
 		if (!trimmed || !projectId) return;
+		if (this.#get().isGenerating) return;
 
 		try {
 			const res = await workApi.newMessage({
@@ -1064,6 +1195,7 @@ export class ChatActionImpl {
 		if (!sessionId || !trimmed) return;
 
 		const state = this.#get();
+		if (state.isGenerating) return;
 		if (state.activeSessionId === sessionId && state.isGenerating) {
 			if (state.pendingBootstrapSessionId === sessionId) {
 				this.#set({ pendingBootstrapSessionId: null });
@@ -1162,15 +1294,9 @@ export class ChatActionImpl {
 							resumeStream: false,
 						});
 					}
-				} catch {
-					const msg = this.#get().messagesMap[assistantMsgId];
-					if (msg && event.data) {
-						this.#dispatchChat({
-							type: "updateMessage",
-							id: assistantMsgId,
-							value: { ...msg, content: msg.content + event.data },
-						});
-					}
+				} catch (err) {
+					// 正文只接受 run.completed 的最终结果，解析失败的流片段不再兜底写入正文。
+					console.error("SSE message parse error:", err);
 				}
 			},
 			onError: (err) => {
@@ -1225,6 +1351,30 @@ export class ChatActionImpl {
 		return loadPromise;
 	};
 
+	#fetchAllConversationMessages = async (sessionId: string) => {
+		const perPage = 100;
+		let page = 1;
+		let total = Number.POSITIVE_INFINITY;
+		const items: BackendMessage[] = [];
+
+		while (items.length < total) {
+			const res = await sessionApi.getMessages(sessionId, page, perPage);
+			const data = res.data.data;
+			const pageItems = data?.items ?? [];
+			total = data?.total ?? items.length + pageItems.length;
+			items.push(...pageItems);
+
+			// 中文注释：当最后一页不足 perPage 或后端未返回更多记录时，直接停止翻页，避免无意义请求。
+			if (pageItems.length < perPage || pageItems.length === 0) {
+				break;
+			}
+
+			page += 1;
+		}
+
+		return items;
+	};
+
 	#loadConversationMessages = async (sessionId: string, options?: { resumeStream?: boolean }) => {
 		try {
 			const shouldCheckRuntime = options?.resumeStream !== false;
@@ -1242,8 +1392,7 @@ export class ChatActionImpl {
 			const optimisticCountBeforeLoad = getSessionLocalMessages(stateBeforeLoad, sessionId).filter(
 				isOptimisticMessage,
 			).length;
-			const res = await sessionApi.getMessages(sessionId, 1, 100);
-			const items = res.data.data?.items ?? [];
+			const items = await this.#fetchAllConversationMessages(sessionId);
 			const persistedMessages = items.map(mapBackendMessage);
 			const state = this.#get();
 			if (state.pendingBootstrapSessionId === sessionId) return;
@@ -1413,6 +1562,7 @@ export class ChatActionImpl {
 
 	resendMessage = async (messageId: string) => {
 		const state = this.#get();
+		if (state.isGenerating) return;
 		const oldMsg = state.messagesMap[messageId];
 		if (oldMsg?.role !== "assistant") return;
 
