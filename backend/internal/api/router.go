@@ -70,7 +70,7 @@ func SetupRouter(cfg config.Config, eventbus eventbus.EventBus, db *gorm.DB) *gi
 		logs.Info("LLM model routes registered successfully")
 
 		inferrer := service.NewDefaultAssistantInferrer(1)
-		sessionService := service.NewSessionService(db, eventbus, inferrer)
+		sessionService := service.NewSessionService(db, eventbus, inferrer, giteaClient, cfg.Gitea, cfg.Env)
 		handler.RegisterSessionRoutes(v1, sessionService)
 		logs.Info("Session routes registered successfully")
 
@@ -82,7 +82,7 @@ func SetupRouter(cfg config.Config, eventbus eventbus.EventBus, db *gorm.DB) *gi
 		projectFileHandler.RegisterRoutes(v1)
 		logs.Info("Project file routes registered successfully")
 
-		workService := service.NewWorkService(db, eventbus, inferrer)
+		workService := service.NewWorkService(db, eventbus, inferrer, giteaClient, cfg.Gitea, cfg.Env)
 		handler.RegisterWorkRoutes(v1, workService)
 		logs.Info("Work routes registered successfully")
 

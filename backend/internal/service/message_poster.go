@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,10 +10,12 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/insmtx/Leros/backend/config"
 	"github.com/insmtx/Leros/backend/internal/api/auth"
 	"github.com/insmtx/Leros/backend/internal/api/contract"
 	"github.com/insmtx/Leros/backend/internal/infra/db"
 	"github.com/insmtx/Leros/backend/internal/infra/filestore"
+	"github.com/insmtx/Leros/backend/internal/infra/gitea"
 	eventbus "github.com/insmtx/Leros/backend/internal/infra/mq"
 	"github.com/insmtx/Leros/backend/internal/worker/protocol"
 	"github.com/insmtx/Leros/backend/pkg/dm"
@@ -24,17 +27,23 @@ import (
 // MessagePoster 无状态的消息投递器，负责消息创建、统计更新、事件发布、Worker 任务投递。
 // 多个 goroutine 可安全并发使用。
 type MessagePoster struct {
-	db       *gorm.DB
-	eventbus eventbus.EventBus
-	inferrer AssistantInferrer
+	db          *gorm.DB
+	eventbus    eventbus.EventBus
+	inferrer    AssistantInferrer
+	giteaClient *gitea.Client
+	giteaCfg    *config.GiteaConfig
+	env         string
 }
 
 // NewMessagePoster 创建 MessagePoster 实例。
-func NewMessagePoster(db *gorm.DB, eb eventbus.EventBus, inferrer AssistantInferrer) *MessagePoster {
+func NewMessagePoster(db *gorm.DB, eb eventbus.EventBus, inferrer AssistantInferrer, giteaClient *gitea.Client, giteaCfg *config.GiteaConfig, env string) *MessagePoster {
 	return &MessagePoster{
-		db:       db,
-		eventbus: eb,
-		inferrer: inferrer,
+		db:          db,
+		eventbus:    eb,
+		inferrer:    inferrer,
+		giteaClient: giteaClient,
+		giteaCfg:    giteaCfg,
+		env:         env,
 	}
 }
 
@@ -195,19 +204,36 @@ func (o *newMessageOrchestrator) resolveOrCreateProject() error {
 
 	projectID := fmt.Sprintf("prj_%s", snowflake.GenerateIDBase58())
 	o.project = &types.Project{
-		PublicID:    projectID,
-		OrgID:       o.caller.OrgID,
-		OwnerID:     o.caller.Uin,
-		Name:        title,
-		Description: "",
-		Objective:   strings.TrimSpace(o.req.Objective),
-		Status:      string(types.ProjectStatusActive),
+		PublicID:           projectID,
+		OrgID:              o.caller.OrgID,
+		OwnerID:            o.caller.Uin,
+		Name:               title,
+		Description:        "",
+		Objective:          strings.TrimSpace(o.req.Objective),
+		Status:             string(types.ProjectStatusActive),
+		GiteaDefaultBranch: "main",
 	}
+
+	repoName := o.poster.buildRepoName(o.caller.OrgID, projectID)
+	repoInfo, err := o.poster.giteaClient.CreateRepo(o.ctx, o.poster.giteaCfg.DefaultOwner, gitea.CreateRepoRequest{
+		Name:        repoName,
+		Description: "",
+		Private:     true,
+		AutoInit:    true,
+	})
+	if err != nil {
+		return fmt.Errorf("create gitea repo: %w", err)
+	}
+	o.project.GiteaRepoFullName = repoInfo.FullName
+	o.project.GiteaRepoID = repoInfo.ID
+
 	if err := db.CreateProject(o.ctx, o.poster.db, o.project); err != nil {
 		return fmt.Errorf("create project: %w", err)
 	}
 
-	logs.InfoContextf(o.ctx, "created project=%s org=%d user=%d", projectID, o.caller.OrgID, o.caller.Uin)
+	o.poster.initRepoStructure(o.ctx, repoInfo.FullName)
+
+	logs.InfoContextf(o.ctx, "created project=%s org=%d user=%d repo=%s", projectID, o.caller.OrgID, o.caller.Uin, repoInfo.FullName)
 
 	if err := db.CreateProjectMember(o.ctx, o.poster.db, &types.ProjectMember{
 		ProjectID:  o.project.ID,
@@ -526,4 +552,70 @@ func (p *MessagePoster) resolveWorkspaceIDs(ctx context.Context, session *types.
 		taskPublicID = task.PublicID
 	}
 	return projectPublicID, taskPublicID, nil
+}
+
+func (p *MessagePoster) buildRepoName(orgID uint, projectPublicID string) string {
+	return fmt.Sprintf("%s-%d-%s", p.env, orgID, projectPublicID)
+}
+
+func (p *MessagePoster) initRepoStructure(ctx context.Context, fullName string) {
+	parts := strings.SplitN(fullName, "/", 2)
+	if len(parts) != 2 {
+		return
+	}
+	owner, repo := parts[0], parts[1]
+
+	emptyContent := base64.StdEncoding.EncodeToString([]byte(""))
+
+	gitignore := `# Leros runtime
+.leros/
+!.leros/memory/
+
+# Dependency directories
+node_modules/
+vendor/
+
+# Build/cache outputs
+dist/
+build/
+target/
+.cache/
+.cache*/
+tmp/
+temp/
+logs/
+log/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Runtime logs
+*.log
+
+# Environment/secrets
+.env
+.env.*
+!.env.example
+`
+	gitignoreContent := base64.StdEncoding.EncodeToString([]byte(gitignore))
+
+	initFiles := []struct {
+		path    string
+		content string
+		msg     string
+	}{
+		{".gitignore", gitignoreContent, "chore: init .gitignore"},
+		{".leros/memory/.gitkeep", emptyContent, "chore: init .leros/memory/"},
+		{"assets/artifacts/.gitkeep", emptyContent, "chore: init assets/artifacts/"},
+		{"README.md", base64.StdEncoding.EncodeToString([]byte("# " + repo + "\n")), "chore: init README"},
+	}
+
+	for _, f := range initFiles {
+		if err := p.giteaClient.CreateFile(ctx, owner, repo, f.path, f.content, f.msg); err != nil {
+			logs.WarnContextf(ctx, "[message_poster] init gitea file %s failed: %v", f.path, err)
+		}
+	}
 }
