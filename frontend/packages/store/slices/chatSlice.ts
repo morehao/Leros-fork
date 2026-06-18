@@ -107,7 +107,10 @@ function mapBackendMessage(msg: BackendMessage): Message {
 			.map(mapArtifactPayload)
 			.filter((artifact): artifact is MessageArtifact => artifact !== undefined);
 		if (artifacts.length) {
-			mapped = { ...mapped, artifacts: mergeArtifacts(mapped.artifacts, artifacts) };
+			mapped = {
+				...mapped,
+				artifacts: mergeArtifacts(mapped.artifacts, artifacts),
+			};
 		}
 	}
 	if (msg.attachments?.length) {
@@ -390,8 +393,7 @@ function trimDuplicatedProcessSteps(
 	const next = [...steps];
 	for (let index = next.length - 1; index >= 0; index -= 1) {
 		const step = next[index];
-		if (!step) continue;
-		if (step.type !== "thinking") continue;
+		if (step?.type !== "thinking") continue;
 
 		const trimmed = trimDuplicatedProcessText(step.content, finalContent);
 		if (trimmed === step.content) {
@@ -683,7 +685,7 @@ function mapToolCallEvent(
 function applySessionEventToMessage(
 	message: Message,
 	event: SessionEventLike,
-	eventType?: string,
+	eventType: string | undefined,
 ): Message {
 	const normalizedEvent = normalizeSessionEvent(event);
 	if (!normalizedEvent) return message;
@@ -700,7 +702,10 @@ function applySessionEventToMessage(
 				("tool_calls" in normalizedEvent ? normalizedEvent.tool_calls : undefined),
 		);
 		if (toolCalls?.length) {
-			return { ...message, toolCalls: mergeToolCalls(message.toolCalls, toolCalls) };
+			return {
+				...message,
+				toolCalls: mergeToolCalls(message.toolCalls, toolCalls),
+			};
 		}
 	}
 
@@ -714,19 +719,28 @@ function applySessionEventToMessage(
 		case "artifact.declared": {
 			const artifact = mapArtifactPayload(payload);
 			if (!artifact) return message;
-			return { ...message, artifacts: mergeArtifacts(message.artifacts, [artifact]) };
+			return {
+				...message,
+				artifacts: mergeArtifacts(message.artifacts, [artifact]),
+			};
 		}
 		case "approval.requested": {
 			const approvalPayload = getApprovalRequestPayload(payload);
 			const approval = approvalPayload ? mapApprovalRequestPayload(approvalPayload) : undefined;
 			if (!approval) return message;
-			return { ...message, approvals: mergeApprovalRequest(message.approvals, approval) };
+			return {
+				...message,
+				approvals: mergeApprovalRequest(message.approvals, approval),
+			};
 		}
 		case "approval.resolved": {
 			const decisionPayload = getApprovalDecisionPayload(payload);
 			const decision = decisionPayload ? mapApprovalDecisionPayload(decisionPayload) : undefined;
 			if (!decision) return message;
-			return { ...message, approvals: mergeApprovalDecision(message.approvals, decision) };
+			return {
+				...message,
+				approvals: mergeApprovalDecision(message.approvals, decision),
+			};
 		}
 		case "message.delta":
 		case "message.result": {
@@ -789,7 +803,10 @@ function applySessionEventsToMessage(
 	events: BackendMessageChunk[] | undefined,
 ): Message {
 	if (!events?.length) return message;
-	return events.reduce((current, event) => applySessionEventToMessage(current, event), message);
+	return events.reduce(
+		(current, event) => applySessionEventToMessage(current, event, undefined),
+		message,
+	);
 }
 
 function isOptimisticMessage(message: Message): boolean {
@@ -1189,7 +1206,7 @@ export class ChatActionImpl {
 		this.#startSSE(sessionId, assistantMsg.id);
 	};
 
-	#startSSE = async (sessionId: string, assistantMsgId: string) => {
+	#startSSE = async (sessionId: string, assistantMsgId: string, replay = false) => {
 		if (this.#sseClient) {
 			this.#sseClient.close();
 			this.#sseClient = null;
@@ -1204,7 +1221,7 @@ export class ChatActionImpl {
 		const client = new FetchSSEClient(url, {
 			method: "POST",
 			headers: { Authorization: `Bearer ${token}` },
-			body: { session_id: sessionId },
+			body: { session_id: sessionId, ...(replay ? { replay: true } : {}) },
 			onMessage: (event) => {
 				try {
 					const data = JSON.parse(event.data) as SSEMessageEvent;
@@ -1227,7 +1244,9 @@ export class ChatActionImpl {
 						this.#sseClient?.close();
 						this.#sseClient = null;
 						// 会话结束后回拉历史消息，确保持久化 usage 能立即参与页面汇总展示。
-						void this.loadConversationMessages(sessionId);
+						void this.loadConversationMessages(sessionId, {
+							resumeStream: false,
+						});
 					}
 				} catch {
 					const msg = this.#get().messagesMap[assistantMsgId];
@@ -1283,20 +1302,31 @@ export class ChatActionImpl {
 		this.#finishStream();
 	};
 
-	loadConversationMessages = async (sessionId: string) => {
+	loadConversationMessages = async (sessionId: string, options?: { resumeStream?: boolean }) => {
 		if (this.#get().pendingBootstrapSessionId === sessionId) return;
 		const loading = this.#messageLoadPromises.get(sessionId);
 		if (loading) return loading;
 
-		const loadPromise = this.#loadConversationMessages(sessionId).finally(() => {
+		const loadPromise = this.#loadConversationMessages(sessionId, options).finally(() => {
 			this.#messageLoadPromises.delete(sessionId);
 		});
 		this.#messageLoadPromises.set(sessionId, loadPromise);
 		return loadPromise;
 	};
 
-	#loadConversationMessages = async (sessionId: string) => {
+	#loadConversationMessages = async (sessionId: string, options?: { resumeStream?: boolean }) => {
 		try {
+			const shouldCheckRuntime = options?.resumeStream !== false;
+			let runtimeStatus: string | undefined;
+			if (shouldCheckRuntime) {
+				try {
+					const sessionRes = await sessionApi.get({ session_id: sessionId });
+					runtimeStatus = sessionRes.data.data?.runtime_status;
+				} catch (err) {
+					console.error("loadConversationMessages get session error:", err);
+				}
+			}
+
 			const stateBeforeLoad = this.#get();
 			const optimisticCountBeforeLoad = getSessionLocalMessages(stateBeforeLoad, sessionId).filter(
 				isOptimisticMessage,
@@ -1329,6 +1359,25 @@ export class ChatActionImpl {
 			const messages = reconcilingLocalMessages.length
 				? mergeSessionMessages(persistedMessages, reconcilingLocalMessages)
 				: persistedMessages;
+			const shouldResumeStream =
+				runtimeStatus === "responding" &&
+				!(
+					state.isGenerating &&
+					state.activeSessionId === sessionId &&
+					state.streamingMessageId !== null
+				);
+			const resumeMessage: Message | undefined = shouldResumeStream
+				? {
+						id: `msg-assistant-resume-${Date.now()}`,
+						conversationId: sessionId,
+						role: "assistant",
+						content: "",
+						timestamp: Date.now(),
+					}
+				: undefined;
+			if (resumeMessage) {
+				messages.push(resumeMessage);
+			}
 
 			const maps: Record<string, Message> = {};
 			const ids: string[] = [];
@@ -1337,7 +1386,19 @@ export class ChatActionImpl {
 				ids.push(m.id);
 			}
 
-			this.#set({ messagesMap: maps, messageIds: ids });
+			this.#set({
+				messagesMap: maps,
+				messageIds: ids,
+				...(resumeMessage
+					? {
+							streamingMessageId: resumeMessage.id,
+							isGenerating: true,
+						}
+					: {}),
+			});
+			if (resumeMessage) {
+				this.#startSSE(sessionId, resumeMessage.id, true);
+			}
 		} catch (err) {
 			console.error("loadConversationMessages error:", err);
 		}
