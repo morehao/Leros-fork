@@ -91,6 +91,10 @@ func (m *replayEventBus) Subscribe(ctx context.Context, topic string, consumer s
 	return nil
 }
 
+func (m *replayEventBus) Request(_ context.Context, _ string, _ any) (*nats.Msg, error) {
+	return nil, fmt.Errorf("replayEventBus: Request not supported")
+}
+
 func (m *replayEventBus) SubscribeFrom(ctx context.Context, topic string, startSeq int64, handler func(msg *nats.Msg)) error {
 	m.startSeq = startSeq
 	for _, msg := range m.messages {
@@ -297,7 +301,7 @@ func TestGetSession_NotFound(t *testing.T) {
 
 func TestGetSessionRuntimeStatusRespondingForRecentProcessingMessage(t *testing.T) {
 	database := setupTestDB(t)
-	service := NewSessionService(database, &mockEventBus{}, &mockInferrer{assistantID: 1})
+	service := NewSessionService(database, &mockEventBus{}, &mockInferrer{assistantID: 1}, nil, nil, "test")
 	ctx := setupTestContextWithCaller(t)
 	session := createTestSession(t, database, service, ctx)
 	createUserMessage(t, database, session.ID, string(types.MessageStatusProcessing), 1)
@@ -313,7 +317,7 @@ func TestGetSessionRuntimeStatusRespondingForRecentProcessingMessage(t *testing.
 
 func TestGetSessionRuntimeStatusIgnoresOldProcessingMessage(t *testing.T) {
 	database := setupTestDB(t)
-	service := NewSessionService(database, &mockEventBus{}, &mockInferrer{assistantID: 1})
+	service := NewSessionService(database, &mockEventBus{}, &mockInferrer{assistantID: 1}, nil, nil, "test")
 	ctx := setupTestContextWithCaller(t)
 	session := createTestSession(t, database, service, ctx)
 	message := createUserMessage(t, database, session.ID, string(types.MessageStatusProcessing), 1)
@@ -335,7 +339,7 @@ func TestGetSessionRuntimeStatusIgnoresOldProcessingMessage(t *testing.T) {
 
 func TestHandleSessionRunStartedMarksReplyMessagesProcessing(t *testing.T) {
 	database := setupTestDB(t)
-	service := NewSessionService(database, &mockEventBus{}, &mockInferrer{assistantID: 1})
+	service := NewSessionService(database, &mockEventBus{}, &mockInferrer{assistantID: 1}, nil, nil, "test")
 	ctx := setupTestContextWithCaller(t)
 	session := createTestSession(t, database, service, ctx)
 	first := createUserMessage(t, database, session.ID, string(types.MessageStatusPending), 1)
@@ -367,7 +371,7 @@ func TestHandleSessionRunStartedMarksReplyMessagesProcessing(t *testing.T) {
 
 func TestCompleteSessionMessageStoresReplyIDsAndCompletesUsers(t *testing.T) {
 	database := setupTestDB(t)
-	service := NewSessionService(database, &mockEventBus{}, &mockInferrer{assistantID: 1})
+	service := NewSessionService(database, &mockEventBus{}, &mockInferrer{assistantID: 1}, nil, nil, "test")
 	ctx := setupTestContextWithCaller(t)
 	session := createTestSession(t, database, service, ctx)
 	first := createUserMessage(t, database, session.ID, string(types.MessageStatusProcessing), 1)
@@ -1345,7 +1349,7 @@ func TestStreamSessionEvents_MissingCaller(t *testing.T) {
 func TestStreamSessionEventsReplayUsesProcessingMessageStartSeqAndFiltersReplies(t *testing.T) {
 	database := setupTestDB(t)
 	ctx := setupTestContextWithCaller(t)
-	sessionService := NewSessionService(database, &mockEventBus{}, &mockInferrer{assistantID: 1})
+	sessionService := NewSessionService(database, &mockEventBus{}, &mockInferrer{assistantID: 1}, nil, nil, "test")
 	session := createTestSession(t, database, sessionService, ctx)
 	reply := createUserMessage(t, database, session.ID, string(types.MessageStatusProcessing), 1)
 	other := createUserMessage(t, database, session.ID, string(types.MessageStatusProcessing), 2)
@@ -1384,7 +1388,7 @@ func TestStreamSessionEventsReplayUsesProcessingMessageStartSeqAndFiltersReplies
 		mustStreamNATSMessage(t, nonMatching),
 		mustStreamNATSMessage(t, matching),
 	}}
-	service := NewSessionService(database, bus, &mockInferrer{assistantID: 1})
+	service := NewSessionService(database, bus, &mockInferrer{assistantID: 1}, nil, nil, "test")
 	var emitted []string
 	err := service.StreamSessionEvents(ctx, session.PublicID, true, events.SinkFunc(func(ctx context.Context, event *events.Event) error {
 		emitted = append(emitted, event.Content)
