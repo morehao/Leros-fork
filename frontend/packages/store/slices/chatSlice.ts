@@ -103,6 +103,7 @@ function mapBackendMessage(msg: BackendMessage): Message {
 
 	let mapped = applySessionEventsToMessage(message, msg.chunks, {
 		appendContent: !message.content,
+		finalContent: message.content,
 	});
 	if (msg.artifacts?.length) {
 		const artifacts = msg.artifacts
@@ -404,6 +405,41 @@ function appendProcessToolCallStep(
 	];
 }
 
+type ApplySessionEventOptions = {
+	appendContent: boolean;
+	finalContent?: string;
+};
+
+function shouldAppendMessageDeltaToProcess(
+	content: string,
+	options: ApplySessionEventOptions,
+): boolean {
+	const trimmedContent = content.trim();
+	if (!trimmedContent) return false;
+
+	const finalContent = options.finalContent?.trim();
+	if (!finalContent) return true;
+
+	// 历史消息里最终回答已在 content 字段，属于最终回答的 delta 不再放入执行过程。
+	return !finalContent.includes(trimmedContent);
+}
+
+function pruneFinalContentProcessSteps(
+	steps: MessageProcessStep[] | undefined,
+	finalContent: string | undefined,
+): MessageProcessStep[] | undefined {
+	const trimmedFinalContent = finalContent?.trim();
+	if (!steps?.length || !trimmedFinalContent) return steps;
+
+	const nextSteps = steps.filter((step) => {
+		if (step.type !== "thinking") return true;
+		const content = step.content.trim();
+		return !!content && !trimmedFinalContent.includes(content);
+	});
+
+	return nextSteps.length ? nextSteps : undefined;
+}
+
 function metadataFromPayload(payload: BackendSessionEventPayload): MessageMetadata | undefined {
 	const usage = mapUsage(payload.usage ?? payload);
 	const streamLatency = latencyFromRunCompletedTimes(payload.started_at, payload.completed_at);
@@ -680,7 +716,7 @@ function applySessionEventToMessage(
 	message: Message,
 	event: SessionEventLike,
 	eventType: string | undefined,
-	options: { appendContent: boolean },
+	options: ApplySessionEventOptions,
 ): Message {
 	const normalizedEvent = normalizeSessionEvent(event);
 	if (!normalizedEvent) return message;
@@ -740,8 +776,20 @@ function applySessionEventToMessage(
 		case "message.delta":
 		case "message.result": {
 			const content = getEventContent(normalizedEvent, payload);
-			if (!content || !options.appendContent) return message;
-			return { ...message, content: message.content + content };
+			if (!content) return message;
+
+			const shouldAppendProcessStep =
+				normalizedEventType === "message.delta" &&
+				shouldAppendMessageDeltaToProcess(content, options);
+			if (!options.appendContent && !shouldAppendProcessStep) return message;
+
+			return {
+				...message,
+				content: options.appendContent ? message.content + content : message.content,
+				processSteps: shouldAppendProcessStep
+					? appendProcessThinkingStep(message.processSteps, content)
+					: message.processSteps,
+			};
 		}
 		case "reasoning.delta": {
 			const thinking = payload.thinking ?? getEventContent(normalizedEvent, payload);
@@ -779,6 +827,7 @@ function applySessionEventToMessage(
 					options.appendContent && !message.content && resultMessage
 						? resultMessage
 						: message.content,
+				processSteps: pruneFinalContentProcessSteps(message.processSteps, resultMessage),
 				artifacts: artifacts?.length
 					? mergeArtifacts(message.artifacts, artifacts)
 					: message.artifacts,
@@ -794,7 +843,7 @@ function applySessionEventToMessage(
 function applySessionEventsToMessage(
 	message: Message,
 	events: BackendMessageChunk[] | undefined,
-	options: { appendContent: boolean },
+	options: ApplySessionEventOptions,
 ): Message {
 	if (!events?.length) return message;
 	return events.reduce(
