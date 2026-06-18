@@ -50,7 +50,7 @@ function CopyButton({ text }: { text: string }) {
 	return (
 		<Button
 			variant="ghost"
-			size="icon-xs"
+			size="icon-[13px]"
 			className={copied ? "text-green-500" : "text-slate-400 hover:text-slate-600"}
 			onClick={handleCopy}
 		>
@@ -78,13 +78,13 @@ export function AIMessageBubble({
 	return (
 		<div data-slot="ai-message" className="group flex items-start gap-3">
 			<Avatar size="sm">
-				<AvatarFallback className="bg-blue-500 text-white text-xs">AI</AvatarFallback>
+				<AvatarFallback className="bg-blue-500 text-[13px] text-white">AI</AvatarFallback>
 			</Avatar>
 			<div className="min-w-0 flex-1">
 				<div className="mb-1.5 flex items-center gap-2">
-					<span className="text-xs font-medium text-slate-500">AI 助手</span>
-					<span className="text-xs text-slate-400">{formatTime(message.timestamp)}</span>
-					{isStreaming && <span className="animate-pulse text-xs text-blue-500">生成中</span>}
+					<span className="text-[13px] font-medium text-slate-500">AI 助手</span>
+					<span className="text-[13px] text-slate-400">{formatTime(message.timestamp)}</span>
+					{isStreaming && <span className="animate-pulse text-[13px] text-blue-500">生成中</span>}
 				</div>
 
 				{hasProcess && message.processSteps && (
@@ -130,14 +130,14 @@ export function AIMessageBubble({
 				{!isStreaming && (
 					<div className="mt-2 flex items-center gap-3">
 						{metricSegments.length > 0 && (
-							<div className="text-xs text-slate-400">{metricSegments.join(" · ")}</div>
+							<div className="text-[13px] text-slate-400">{metricSegments.join(" · ")}</div>
 						)}
 						<div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
 							<CopyButton text={content} />
 							{SHOW_ASSISTANT_MESSAGE_REGENERATE_BUTTON && (
 								<Button
 									variant="ghost"
-									size="icon-xs"
+									size="icon-[13px]"
 									className="text-slate-400 hover:text-slate-600"
 									onClick={() => resendMessage(message.id)}
 								>
@@ -163,6 +163,7 @@ function ProcessTimelineBlock({
 }) {
 	const [expanded, setExpanded] = useState(isStreaming);
 	const [autoFollow, setAutoFollow] = useState(true);
+	const [showBottomFade, setShowBottomFade] = useState(false);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const toolCallMap = useMemo(
 		() => new Map(toolCalls.map((toolCall) => [toolCall.id, toolCall] as const)),
@@ -186,10 +187,18 @@ function ProcessTimelineBlock({
 	}, [isStreaming]);
 
 	useEffect(() => {
-		if (!expanded || !autoFollow) return;
-
 		const container = scrollContainerRef.current;
-		if (!container) return;
+		if (!expanded || !container) {
+			setShowBottomFade(false);
+			return;
+		}
+
+		// 仅在内容确实超出可视高度且底部还有内容未展示时，显示轻量渐隐蒙层。
+		const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+		const hasOverflow = container.scrollHeight > container.clientHeight + 1;
+		setShowBottomFade(hasOverflow && distanceToBottom > 8);
+
+		if (!autoFollow) return;
 
 		// 默认跟随最新步骤，只有用户主动上滑离开底部时才暂停自动滚动。
 		container.scrollTop = container.scrollHeight;
@@ -200,7 +209,7 @@ function ProcessTimelineBlock({
 	return (
 		<div
 			data-slot="process-timeline-block"
-			className="max-w-[min(780px,92%)] overflow-hidden rounded-lg border border-slate-200/80 bg-white/70 text-slate-500 shadow-sm"
+			className="max-w-[min(780px,92%)] overflow-hidden rounded-lg border border-slate-200/80 bg-white/70 text-slate-500 shadow-xs"
 		>
 			<button
 				type="button"
@@ -231,30 +240,38 @@ function ProcessTimelineBlock({
 					)}
 				</div>
 				{!expanded && preview && (
-					<span className="max-w-[54%] truncate text-xs text-slate-500">{preview}</span>
+					<span className="max-w-[54%] truncate text-[13px] text-slate-500">{preview}</span>
 				)}
 			</button>
 			{expanded && (
-				<div className="border-t border-slate-200 px-3 py-3">
-					<div
-						ref={scrollContainerRef}
-						onScroll={(event) => {
-							const container = event.currentTarget;
-							const distanceToBottom =
-								container.scrollHeight - container.scrollTop - container.clientHeight;
+				<div className="border-t border-slate-200 px-5 py-3">
+					<div className="relative">
+						<div
+							ref={scrollContainerRef}
+							onScroll={(event) => {
+								const container = event.currentTarget;
+								const distanceToBottom =
+									container.scrollHeight - container.scrollTop - container.clientHeight;
+								const hasOverflow = container.scrollHeight > container.clientHeight + 1;
 
-							setAutoFollow(distanceToBottom <= 24);
-						}}
-						className="no-scrollbar max-h-[min(45vh,25rem)] space-y-3 overflow-y-auto pr-1"
-					>
-						{steps.map((step, index) => (
-							<ProcessStepItem
-								key={step.id}
-								step={step}
-								index={index}
-								toolCall={step.type === "tool_call" ? toolCallMap.get(step.toolCallId) : undefined}
-							/>
-						))}
+								setAutoFollow(distanceToBottom <= 24);
+								setShowBottomFade(hasOverflow && distanceToBottom > 8);
+							}}
+							className="no-scrollbar max-h-[min(45vh,25rem)] space-y-3 overflow-y-auto pr-1"
+						>
+							{steps.map((step) => (
+								<ProcessStepItem
+									key={step.id}
+									step={step}
+									toolCall={
+										step.type === "tool_call" ? toolCallMap.get(step.toolCallId) : undefined
+									}
+								/>
+							))}
+						</div>
+						{showBottomFade && (
+							<div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white/30 to-white/0" />
+						)}
 					</div>
 				</div>
 			)}
@@ -262,42 +279,31 @@ function ProcessTimelineBlock({
 	);
 }
 
-function ProcessStepItem({
-	step,
-	index,
-	toolCall,
-}: {
-	step: MessageProcessStep;
-	index: number;
-	toolCall?: ToolCall;
-}) {
+function ProcessStepItem({ step, toolCall }: { step: MessageProcessStep; toolCall?: ToolCall }) {
 	return (
 		<div className="flex gap-3">
-			<div className="flex w-6 shrink-0 flex-col items-center">
-				<div className="flex size-6 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-[11px] font-medium text-blue-600">
-					{index + 1}
-				</div>
-				<div className="mt-1 min-h-4 w-px flex-1 bg-slate-200" />
-			</div>
+			{/* <div className="flex w-4 shrink-0 justify-center">
+        <div className="w-px bg-slate-200" />
+      </div> */}
 			<div className="min-w-0 flex-1 pb-1">
 				{step.type === "thinking" ? (
-					<div className="rounded-xl border border-slate-200/80 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-sm">
-						<div className="mb-1 flex items-center gap-2 text-xs font-medium text-slate-500">
+					<div className="min-w-0">
+						<div className="mb-1 flex items-center gap-2 text-[13px] font-medium text-blue-600">
 							<Brain className="size-3.5 text-blue-500" />
 							<span>思考过程</span>
 						</div>
 						<MarkdownRenderer
 							content={step.content}
-							className="prose prose-slate prose-sm max-w-none prose-p:my-1.5 prose-pre:my-2 prose-ul:my-1.5 prose-ol:my-1.5"
+							className="max-w-none text-[13px] leading-6 text-[color:var(--leros-chat-text-muted)] [&_*]:text-[color:var(--leros-chat-text-muted)] [&_ol]:my-1 [&_p]:my-1 [&_pre]:my-1.5 [&_strong]:text-[color:var(--leros-chat-text-muted)] [&_ul]:my-1"
 						/>
 					</div>
 				) : toolCall ? (
 					<div>
-						<div className="mb-1 flex items-center gap-2 text-xs font-medium text-slate-500">
+						<div className="mb-1 flex items-center gap-2 text-[13px] font-medium text-blue-600">
 							<Wrench className="size-3.5 text-emerald-500" />
 							<span>工具调用</span>
 						</div>
-						<ToolCallBlock toolCalls={[toolCall]} />
+						<ToolCallBlock toolCalls={[toolCall]} variant="timeline" />
 					</div>
 				) : null}
 			</div>
@@ -378,7 +384,7 @@ function MessageArtifactList({ artifacts }: { artifacts: MessageArtifact[] }) {
 							<div className="truncate text-sm font-semibold leading-5 text-slate-700">
 								{artifact.title || artifact.name}
 							</div>
-							<div className="mt-0.5 truncate text-xs leading-4 text-slate-400">
+							<div className="mt-0.5 truncate text-[13px] leading-4 text-slate-400">
 								{artifact.name}
 								{artifact.size ? ` · ${artifact.size}` : ""}
 							</div>
