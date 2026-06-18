@@ -88,7 +88,11 @@ func artifactPayloadFromRecord(record agentworkspace.ArtifactRecord) events.Arti
 		Description:  strings.TrimSpace(record.Description),
 		MimeType:     strings.TrimSpace(record.MimeType),
 		ArtifactType: artifactType(record.ArtifactType),
+		FileSize:     record.FileSize,
 		StorageKey:   strings.TrimSpace(record.StorageKey),
+		Sha256:       record.Sha256,
+		Source:       artifactSource(record.Source),
+		Status:       artifactStatus(record.Status),
 	}
 }
 
