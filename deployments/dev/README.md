@@ -45,6 +45,27 @@ After starting infrastructure, start components independently:
 ./dev-frontend.sh
 ```
 
+### Windows Quick Start
+
+If you are developing on Windows, use the tracked PowerShell/CMD wrappers under `deployments/dev/`:
+
+```powershell
+# Start Docker deps + server + worker + frontend
+.\deployments\dev\start-dev.cmd
+
+# Rebuild and restart backend only
+.\deployments\dev\restart-backend.cmd
+
+# Stop frontend + backend + Docker deps
+.\deployments\dev\stop-dev.cmd
+```
+
+Notes for Windows:
+
+- `stop-dev.cmd` will auto request administrator permission when needed, because Windows may block killing the frontend process tree under normal permission.
+- `start-dev.cmd` keeps using the repo's normal frontend `dev:web` flow, so frontend still hot reloads as usual.
+- If `bundles/leros.exe` is missing, `start-dev.cmd` will rebuild it automatically.
+
 The server and worker scripts support `--build` (or `-b`) to rebuild `./bundles/leros` before starting. The scripts load `deployments/dev/.env` before reading YAML config, so values like `${LLM_API_KEY}` in config files are resolved from `.env`.
 
 ### View Logs
