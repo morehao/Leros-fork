@@ -33,16 +33,18 @@ import (
 
 type projectService struct {
 	db          *gorm.DB
+	inferrer    AssistantInferrer
 	giteaClient *gitea.Client
 	giteaCfg    *config.GiteaConfig
 	env         string
 }
 
-// getWorkerIDByProjectID 根据项目 publicID 获取对应的 worker ID。
-// TODO: 实现根据项目查询实际 worker 的逻辑，当前固定返回 1。
-func getWorkerIDByProjectID(publicID string) uint {
-	// TODO: 从项目-worker 映射表查询
-	return 1
+// fileTreeEntry 文件树 walk 阶段收集的扁平条目
+type fileTreeEntry struct {
+	absPath string
+	isDir   bool
+	size    int64
+	modTime int64
 }
 
 // NewProjectService 创建项目服务实例
@@ -52,6 +54,13 @@ func NewProjectService(db *gorm.DB, giteaClient *gitea.Client, giteaCfg *config.
 		giteaClient: giteaClient,
 		giteaCfg:    giteaCfg,
 		env:         env,
+	}
+}
+
+func NewProjectServiceWithInferrer(db *gorm.DB, inferrer AssistantInferrer) contract.ProjectService {
+	return &projectService{
+		db:       db,
+		inferrer: inferrer,
 	}
 }
 
@@ -449,7 +458,10 @@ func (s *projectService) GetProjectMemory(ctx context.Context, publicID string) 
 	}
 
 	// 3. 拼 repo 路径: {workspaceRoot}/projects/{orgID}/{publicID}/repo/
-	workerID := getWorkerIDByProjectID(publicID)
+	workerID, err := resolveProjectWorkerID(ctx, s.db, project.OrgID, project.ID, s.inferrer)
+	if err != nil {
+		return nil, fmt.Errorf("resolve project worker: %w", err)
+	}
 	repoDir, err := workspace.ProjectRepoPath(project.OrgID, workerID, publicID)
 	if err != nil {
 		return nil, err

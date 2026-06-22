@@ -1,7 +1,7 @@
 "use client";
 
 import type { AuthUser, NavItem, Project, ViewMode } from "@leros/store";
-import { useChatStore, useLayoutStore } from "@leros/store";
+import { useAuthStore, useChatStore, useLayoutStore, userApi } from "@leros/store";
 import { Button } from "@leros/ui/components/ui/button";
 import {
 	Dialog,
@@ -15,27 +15,36 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@leros/ui/components/ui/dropdown-menu";
+import { Input } from "@leros/ui/components/ui/input";
 import { ScrollArea } from "@leros/ui/components/ui/scroll-area";
 import { cn } from "@leros/ui/lib/utils";
 import {
+	Camera,
+	Check,
 	ChevronsLeft,
 	ChevronsRight,
 	ClipboardList,
 	Database,
 	Hash,
 	LayoutGrid,
+	Loader2,
 	LogOut,
 	MoreHorizontal,
 	Network,
 	Pencil,
+	RefreshCcw,
+	RotateCw,
 	Trash2,
+	Upload,
 	UserRound,
 	Zap,
 } from "lucide-react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { ChangeEvent, CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { APP_LOGO_SRC } from "../../assets";
 import { useAuth } from "../auth";
 import { DiceBearAvatar } from "../avatar/DiceBearAvatar";
@@ -94,11 +103,13 @@ export function LeftRail({
 		updateProject,
 	} = useLayoutStore((s) => s);
 	const clearComposerInput = useChatStore((s) => s.clearComposerInput);
+	const setAuthUser = useAuthStore((s) => s.setAuthUser);
 	const { isAuthenticated, openAuthDialog, requireAuth, logout, user } = useAuth();
 	const hasLoadedPreferenceRef = useRef(false);
 	const [renameProject, setRenameProject] = useState<Project | null>(null);
 	const [renameValue, setRenameValue] = useState("");
 	const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+	const [accountDialogOpen, setAccountDialogOpen] = useState(false);
 
 	useEffect(() => {
 		fetchProjects();
@@ -252,6 +263,7 @@ export function LeftRail({
 	};
 
 	const sidebarWidth = leftRailCollapsed ? LEFT_RAIL_COLLAPSED_WIDTH : leftRailWidth;
+	const profileTriggerWidth = Math.max(0, sidebarWidth - 16);
 
 	return (
 		<aside
@@ -354,6 +366,11 @@ export function LeftRail({
 							side="top"
 							sideOffset={10}
 							className="leros-profile-menu"
+							style={
+								{
+									"--leros-sidebar-menu-width": `${profileTriggerWidth}px`,
+								} as CSSProperties
+							}
 						>
 							{/* 暂时仅保留退出登录入口，其他菜单项先注释隐藏；恢复时记得同步恢复对应 import。 */}
 							{/*
@@ -369,8 +386,14 @@ export function LeftRail({
 								<CircleHelp className="size-4" />
 								<span>使用帮助</span>
 							</DropdownMenuItem>
-							<DropdownMenuSeparator />
 							*/}
+							<DropdownMenuItem onClick={() => setAccountDialogOpen(true)}>
+								<UserRound className="size-4" />
+								<span>账户管理</span>
+							</DropdownMenuItem>
+							<DropdownMenuSeparator />
+							<DesktopUpdateMenuSection />
+							<DropdownMenuSeparator />
 							<DropdownMenuItem variant="destructive" onClick={handleLogout}>
 								<LogOut className="size-4" />
 								<span>退出登录</span>
@@ -411,6 +434,12 @@ export function LeftRail({
 					if (event.key === "ArrowLeft") setLeftRailWidth(leftRailWidth - 8);
 					if (event.key === "ArrowRight") setLeftRailWidth(leftRailWidth + 8);
 				}}
+			/>
+			<AccountManagementDialog
+				open={accountDialogOpen}
+				user={user}
+				onOpenChange={setAccountDialogOpen}
+				onUserChange={setAuthUser}
 			/>
 			<Dialog
 				open={renameProject !== null}
@@ -467,6 +496,224 @@ export function LeftRail({
 			</Dialog>
 		</aside>
 	);
+}
+
+function AccountManagementDialog({
+	open,
+	user,
+	onOpenChange,
+	onUserChange,
+}: {
+	open: boolean;
+	user: AuthUser | null;
+	onOpenChange: (open: boolean) => void;
+	onUserChange: (user: AuthUser | null) => void;
+}) {
+	const fileInputRef = useRef<HTMLInputElement>(null);
+	const [nameValue, setNameValue] = useState(user?.name ?? "");
+	const [editingName, setEditingName] = useState(false);
+	const [savingName, setSavingName] = useState(false);
+	const [uploadingAvatar, setUploadingAvatar] = useState(false);
+	const [previewAvatarUrl, setPreviewAvatarUrl] = useState<string | undefined>();
+
+	useEffect(() => {
+		if (!open) {
+			setEditingName(false);
+			setPreviewAvatarUrl(undefined);
+			return;
+		}
+		setNameValue(user?.name ?? "");
+	}, [open, user?.name]);
+
+	const updateLocalUser = (patch: Partial<AuthUser>) => {
+		if (!user) return;
+		onUserChange({ ...user, ...patch });
+	};
+
+	const requirePublicId = () => {
+		if (user?.publicId) return user.publicId;
+		toast.error("当前登录信息缺少用户 ID，请重新登录后再试");
+		return null;
+	};
+
+	const handleSaveName = async () => {
+		const publicId = requirePublicId();
+		const nextName = nameValue.trim();
+		if (!publicId || !nextName || nextName === user?.name) {
+			setEditingName(false);
+			return;
+		}
+
+		setSavingName(true);
+		try {
+			const response = await userApi.update({ public_id: publicId, name: nextName });
+			const updatedUser = response.data.data;
+			if (updatedUser?.name) {
+				updateLocalUser({
+					publicId: updatedUser.public_id || publicId,
+					name: updatedUser.name,
+					email: updatedUser.email || user?.email || "",
+					avatarUrl: updatedUser.avatar_url || user?.avatarUrl,
+				});
+			} else {
+				updateLocalUser({ name: nextName });
+			}
+			setEditingName(false);
+			toast.success("用户名已更新");
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "用户名更新失败";
+			toast.error(message);
+		} finally {
+			setSavingName(false);
+		}
+	};
+
+	const handleAvatarChange = async (event: ChangeEvent<HTMLInputElement>) => {
+		const file = event.target.files?.[0];
+		event.target.value = "";
+		if (!file) return;
+
+		setUploadingAvatar(true);
+		try {
+			const avatarUrl = await readFileAsDataUrl(file);
+			setPreviewAvatarUrl(avatarUrl);
+			updateLocalUser({ avatarUrl });
+			setPreviewAvatarUrl(undefined);
+			toast.success("头像已更新");
+		} catch (err) {
+			setPreviewAvatarUrl(undefined);
+			const message = err instanceof Error ? err.message : "头像更新失败";
+			toast.error(message);
+		} finally {
+			setUploadingAvatar(false);
+		}
+	};
+
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent className="sm:max-w-md" showCloseButton>
+				<DialogHeader>
+					<DialogTitle>账户管理</DialogTitle>
+					<DialogDescription>查看并更新你的个人信息</DialogDescription>
+				</DialogHeader>
+
+				<div className="mt-4 flex flex-col items-center gap-5">
+					<div className="relative">
+						<button
+							type="button"
+							className="group relative size-24 overflow-hidden rounded-full bg-[var(--leros-primary)] text-white ring-4 ring-slate-100"
+							onClick={() => fileInputRef.current?.click()}
+							disabled={uploadingAvatar}
+							aria-label="上传头像"
+						>
+							<ImageWithFallback
+								src={previewAvatarUrl || user?.avatarUrl}
+								alt={user?.name ?? "Avatar"}
+								className="h-full w-full object-cover"
+								fallback={
+									user ? (
+										<DiceBearAvatar
+											seed={`user:${user.email || user.name}`}
+											alt={user.name ?? "Avatar"}
+											className="h-full w-full"
+											size={128}
+										/>
+									) : (
+										<span className="text-xl font-bold">{getAvatarInitial("Leros")}</span>
+									)
+								}
+							/>
+							<span className="absolute inset-0 flex items-center justify-center bg-slate-950/45 text-white opacity-0 transition-opacity group-hover:opacity-100">
+								{uploadingAvatar ? (
+									<Loader2 className="size-5 animate-spin" />
+								) : (
+									<Camera className="size-5" />
+								)}
+							</span>
+						</button>
+						<input
+							ref={fileInputRef}
+							type="file"
+							accept="image/*"
+							className="hidden"
+							onChange={handleAvatarChange}
+						/>
+					</div>
+
+					<div className="w-full space-y-4">
+						<div>
+							<div className="mb-1.5 text-xs font-medium text-slate-500">用户名</div>
+							{editingName ? (
+								<div className="flex items-center gap-2">
+									<Input
+										value={nameValue}
+										onChange={(event) => setNameValue(event.target.value)}
+										onKeyDown={(event) => {
+											if (event.key === "Enter") void handleSaveName();
+											if (event.key === "Escape") {
+												setNameValue(user?.name ?? "");
+												setEditingName(false);
+											}
+										}}
+										autoFocus
+										className="h-9"
+									/>
+									<Button
+										size="icon-sm"
+										onClick={handleSaveName}
+										disabled={savingName || !nameValue.trim()}
+										aria-label="保存用户名"
+									>
+										{savingName ? (
+											<Loader2 className="size-4 animate-spin" />
+										) : (
+											<Check className="size-4" />
+										)}
+									</Button>
+								</div>
+							) : (
+								<div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+									<span className="truncate text-sm font-medium text-slate-900">
+										{user?.name ?? "Leros 用户"}
+									</span>
+									<Button
+										variant="ghost"
+										size="icon-sm"
+										onClick={() => setEditingName(true)}
+										aria-label="更改用户名"
+									>
+										<Pencil className="size-3.5" />
+									</Button>
+								</div>
+							)}
+						</div>
+
+						<div>
+							<div className="mb-1.5 text-xs font-medium text-slate-500">邮箱</div>
+							<div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">
+								{user?.email ?? "未绑定邮箱"}
+							</div>
+						</div>
+					</div>
+				</div>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.addEventListener("load", () => {
+			if (typeof reader.result === "string") {
+				resolve(reader.result);
+				return;
+			}
+			reject(new Error("头像读取失败"));
+		});
+		reader.addEventListener("error", () => reject(new Error("头像读取失败")));
+		reader.readAsDataURL(file);
+	});
 }
 
 function ProfileAvatar({ user }: { user: AuthUser | null }) {
@@ -531,13 +778,188 @@ function getAvatarInitial(label: string) {
 	return (trimmed[0] ?? "L").toUpperCase();
 }
 
+type DesktopUpdatePhase =
+	| "idle"
+	| "checking"
+	| "available"
+	| "downloading"
+	| "downloaded"
+	| "up-to-date"
+	| "error"
+	| "unsupported";
+
+type DesktopUpdateState = {
+	currentVersion: string;
+	phase: DesktopUpdatePhase;
+	message: string;
+	availableVersion?: string;
+	downloadedVersion?: string;
+	progressPercent?: number;
+	releaseNotes?: string;
+	canCheck: boolean;
+	canRestart: boolean;
+};
+
+type DesktopUpdateApi = {
+	getState: () => Promise<DesktopUpdateState>;
+	checkForUpdates: () => Promise<DesktopUpdateState>;
+	quitAndInstall: () => Promise<boolean>;
+	subscribe: (listener: (state: DesktopUpdateState) => void) => () => void;
+};
+
+const initialDesktopUpdateState: DesktopUpdateState = {
+	currentVersion: "0.0.0",
+	phase: "idle",
+	message: "正在读取更新状态",
+	canCheck: false,
+	canRestart: false,
+};
+
+function getDesktopUpdateApi(): DesktopUpdateApi | null {
+	if (typeof window === "undefined") {
+		return null;
+	}
+
+	return ((window as Window & { lerosDesktop?: DesktopUpdateApi }).lerosDesktop ?? null) as DesktopUpdateApi | null;
+}
+
+function DesktopUpdateMenuSection() {
+	const desktopApi = getDesktopUpdateApi();
+	const [updateState, setUpdateState] = useState<DesktopUpdateState>(initialDesktopUpdateState);
+	const [checking, setChecking] = useState(false);
+	const [restarting, setRestarting] = useState(false);
+	const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
+
+	useEffect(() => {
+		if (!desktopApi) {
+			return;
+		}
+
+		let mounted = true;
+		void desktopApi.getState().then((state) => {
+			if (mounted) {
+				setUpdateState(state);
+			}
+		});
+
+		const unsubscribe = desktopApi.subscribe((state) => {
+			setUpdateState(state);
+		});
+
+		return () => {
+			mounted = false;
+			unsubscribe();
+		};
+	}, [desktopApi]);
+
+	if (!desktopApi) {
+		return null;
+	}
+
+	const handleCheckForUpdates = async () => {
+		setChecking(true);
+		try {
+			const nextState = await desktopApi.checkForUpdates();
+			setUpdateState(nextState);
+			if (nextState.phase === "up-to-date") {
+				toast.success("当前已经是最新版本");
+			}
+			if (nextState.phase === "unsupported") {
+				toast.message(nextState.message);
+			}
+		} finally {
+			setChecking(false);
+		}
+	};
+
+	const handleRestartToUpdate = async () => {
+		setRestarting(true);
+		try {
+			const accepted = await desktopApi.quitAndInstall();
+			if (!accepted) {
+				toast.message("当前还没有可安装的更新");
+			}
+		} finally {
+			setRestarting(false);
+		}
+	};
+
+	const versionLabel = updateState.downloadedVersion ?? updateState.availableVersion;
+
+	return (
+		<>
+			<div className="space-y-1">
+				{typeof updateState.progressPercent === "number" ? (
+					<div className="px-2 pb-1">
+						<div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+							<div
+								className="h-full rounded-full bg-[#34c59a] transition-all"
+								style={{ width: `${Math.max(0, Math.min(updateState.progressPercent, 100))}%` }}
+							/>
+						</div>
+					</div>
+				) : null}
+
+				{updateState.canRestart ? (
+					<>
+						<button
+							type="button"
+							className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm text-slate-700 outline-none transition-colors hover:bg-accent hover:text-accent-foreground"
+							onClick={() => setReleaseNotesOpen(true)}
+						>
+							<RefreshCcw className="size-4" />
+							<span>更新日志</span>
+						</button>
+						<button
+							type="button"
+							className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm font-medium text-[#34c59a] outline-none transition-colors hover:bg-[#34c59a]/8"
+							onClick={handleRestartToUpdate}
+							disabled={restarting}
+						>
+							{restarting ? <RotateCw className="size-4 animate-spin" /> : <Upload className="size-4" />}
+							<span>重启升级</span>
+						</button>
+					</>
+				) : (
+					<button
+						type="button"
+						className="flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left text-sm text-slate-700 outline-none transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+						onClick={handleCheckForUpdates}
+						disabled={!updateState.canCheck || checking}
+					>
+						{checking || updateState.phase === "checking" ? (
+							<Loader2 className="size-4 animate-spin" />
+						) : (
+							<RefreshCcw className="size-4" />
+						)}
+						<span>检查更新</span>
+					</button>
+				)}
+			</div>
+
+			<Dialog open={releaseNotesOpen} onOpenChange={setReleaseNotesOpen}>
+				<DialogContent className="sm:max-w-lg" showCloseButton>
+					<DialogHeader>
+						<DialogTitle>更新日志</DialogTitle>
+						<DialogDescription>
+							{versionLabel ? `即将安装 v${versionLabel}` : "即将安装最新版本"}
+						</DialogDescription>
+					</DialogHeader>
+					<pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+						{updateState.releaseNotes || "当前版本没有附带更新日志。"}
+					</pre>
+				</DialogContent>
+			</Dialog>
+		</>
+	);
+}
+
 function getRouteActive(path: string, view: ViewMode) {
 	if (view === "workbench") return path === "/" || path.startsWith("/workbench");
 	if (view === "chat") return path.startsWith("/chat");
 	if (view === "digitalAssistant") return path.startsWith("/assistants");
 	if (view === "skills") return path.startsWith("/skills");
 	if (view === "knowledge") return path.startsWith("/knowledge");
-	if (view === "settings") return path.startsWith("/settings");
 	if (view === "tasks") return path.startsWith("/tasks");
 	return false;
 }
