@@ -124,11 +124,19 @@ func (c *Consumer) handleInstall(ctx context.Context, req protocol.SkillManageme
 		return c.replyError(req.Body.ReplyTo, "find leros binary", err)
 	}
 
-	cmd := exec.CommandContext(ctx, lerosBin, "skill", "install", skillID, "--force", "--yes")
+	args := []string{"skill", "install", skillID, "--force", "--yes"}
+	if source := strings.TrimSpace(req.Body.Source); source != "" {
+		args = append(args, "--source", source)
+	}
+	if version := strings.TrimSpace(req.Body.Version); version != "" {
+		args = append(args, "--version", version)
+	}
+
+	cmd := exec.CommandContext(ctx, lerosBin, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	logs.InfoContextf(ctx, "Running: %s skill install %s --force --yes", lerosBin, skillID)
+	logs.InfoContextf(ctx, "Running: %s %s", lerosBin, strings.Join(args, " "))
 	if err := cmd.Run(); err != nil {
 		logs.ErrorContextf(ctx, "leros skill install failed for %q: %v", skillID, err)
 		return c.replyError(req.Body.ReplyTo, fmt.Sprintf("install skill %q", skillID), err)

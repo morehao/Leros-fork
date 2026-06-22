@@ -15,6 +15,7 @@ type SkillPackageDownload struct {
 type InstallSkillRequest struct {
 	Source  string `json:"source" binding:"required"`
 	SkillID string `json:"skill_id" binding:"required"`
+	Version string `json:"version,omitempty"`
 }
 
 // InstallSkillResponse Skill 安装响应（异步，仅表示已接受）。
@@ -111,6 +112,7 @@ type UninstallSkillResponse struct {
 type SkillDetailRequest struct {
 	Source  string `json:"source" binding:"required"`   // "Leros" for marketplace, "installed" for installed skills
 	SkillID string `json:"skill_id" binding:"required"` // skill identifier
+	Version string `json:"version,omitempty"`           // optional version, default "latest" for external sources
 }
 
 // SkillDetailResponse Skill 详情响应，包含完整元数据和 SKILL.md 正文。

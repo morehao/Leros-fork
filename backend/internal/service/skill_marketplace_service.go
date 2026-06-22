@@ -55,16 +55,9 @@ func (s *skillMarketplaceService) SearchSkillMarketplace(ctx context.Context, re
 	queryBuiltin, queryExternal := s.resolveSources(req.SourceTypes)
 
 	keyword := strings.TrimSpace(req.Keyword)
-	var externalQuery string
 
 	if keyword == "" {
-		if req.Category != "" {
-			externalQuery = req.Category
-		} else {
-			externalQuery = "office"
-		}
-	} else {
-		externalQuery = keyword
+		keyword = req.Category
 	}
 
 	var (
@@ -79,7 +72,7 @@ func (s *skillMarketplaceService) SearchSkillMarketplace(ctx context.Context, re
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			items, err := s.searchBuiltin(ctx, req.Keyword, req.Category, req.Limit)
+			items, err := s.searchBuiltin(ctx, keyword, req.Category, req.Limit)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -93,17 +86,17 @@ func (s *skillMarketplaceService) SearchSkillMarketplace(ctx context.Context, re
 		}()
 	}
 
-	// 外部源（skills.sh）
+	// 外部源（ClawHub）
 	if queryExternal {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			metas, err := fetch.NewSkillsShSource().Search(ctx, externalQuery, req.Limit)
+			metas, err := fetch.NewClawHubSource().Search(ctx, keyword, req.Limit)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
 				warnings = append(warnings, contract.SkillSourceWarning{
-					SourceType: "Skills.sh",
+					SourceType: "ClawHub",
 					Message:    err.Error(),
 				})
 			} else {
@@ -136,7 +129,7 @@ func (s *skillMarketplaceService) resolveSources(sourceTypes []string) (builtin,
 		switch t {
 		case "Leros":
 			builtin = true
-		case "Skills.sh":
+		case "ClawHub", "Skills.sh":
 			external = true
 		}
 	}
@@ -281,6 +274,7 @@ func (s *skillMarketplaceService) InstallSkill(ctx context.Context, req *contrac
 			Action:  "install",
 			Source:  strings.TrimSpace(req.Source),
 			SkillID: strings.TrimSpace(req.SkillID),
+			Version: strings.TrimSpace(req.Version),
 		},
 	}
 
@@ -390,15 +384,43 @@ func (s *skillMarketplaceService) UninstallSkill(ctx context.Context, req *contr
 func (s *skillMarketplaceService) GetSkillDetail(ctx context.Context, req *contract.SkillDetailRequest) (*contract.SkillDetailResponse, error) {
 	source := strings.TrimSpace(req.Source)
 	skillID := strings.TrimSpace(req.SkillID)
+	version := strings.TrimSpace(req.Version)
 
 	switch source {
 	case "Leros":
 		return s.getLerosSkillDetail(ctx, skillID)
 	case "installed":
 		return s.getInstalledSkillDetail(ctx, skillID)
+	case "clawhub":
+		return s.getClawHubSkillDetail(ctx, skillID, version)
 	default:
 		return nil, fmt.Errorf("unsupported source: %s", source)
 	}
+}
+
+// getClawHubSkillDetail 从 ClawHub 远程获取 skill 详情。
+func (s *skillMarketplaceService) getClawHubSkillDetail(ctx context.Context, skillID, version string) (*contract.SkillDetailResponse, error) {
+	detail, err := fetch.NewClawHubSource().GetDetail(ctx, skillID, version)
+	if err != nil {
+		return nil, fmt.Errorf("clawhub skill detail: %w", err)
+	}
+
+	return &contract.SkillDetailResponse{
+		SkillID:     detail.SkillID,
+		Source:      "clawhub",
+		Name:        detail.Name,
+		Description: detail.Description,
+		SkillMD:     detail.SkillMD,
+		Version:     detail.Version,
+		Author:      detail.Author,
+		Category:    detail.Category,
+		Tags:        detail.Tags,
+		Icon:        detail.Icon,
+		Installs:    0,
+		Verified:    false,
+		SourceType:  "clawhub",
+		Files:       detail.Files,
+	}, nil
 }
 
 // getLerosSkillDetail returns the full detail of a built-in marketplace skill.

@@ -33,6 +33,8 @@ interface SkillDetailViewProps {
 	skillId: string;
 	/** Which source to query — "Leros" for marketplace, "installed" for installed skills */
 	source?: string;
+	/** Optional version for external sources (e.g. ClawHub); defaults to latest */
+	version?: string;
 	/** Called when the user wants to navigate back to the marketplace */
 	onBack?: () => void;
 	/** Called when a related skill card is clicked */
@@ -46,6 +48,7 @@ interface SkillDetailViewProps {
 export function SkillDetailView({
 	skillId,
 	source = "Leros",
+	version,
 	onBack,
 	onSkillClick,
 	onUse,
@@ -71,10 +74,14 @@ export function SkillDetailView({
 		const cancelled = false;
 		try {
 			// Fetch skill detail via the dedicated API
-			const resp = await skillMarketplaceApi.getDetail({
+			const params: Record<string, string> = {
 				source,
 				skill_id: skillId,
-			});
+			};
+			if (version) {
+				params.version = version;
+			}
+			const resp = await skillMarketplaceApi.getDetail(params as any);
 			if (cancelled) return;
 			const detail = resp.data.data;
 			setSkill(detail);
@@ -107,7 +114,7 @@ export function SkillDetailView({
 		} finally {
 			if (!cancelled) setLoading(false);
 		}
-	}, [skillId, source]);
+	}, [skillId, source, version]);
 
 	useEffect(() => {
 		if (!mounted) return;
@@ -121,6 +128,7 @@ export function SkillDetailView({
 			await skillMarketplaceApi.install({
 				source: skill.source_type,
 				skill_id: skill.skill_id,
+				version: skill.version || undefined,
 			});
 			setInstalled(true);
 			toast.success("技能安装已提交");
@@ -178,9 +186,9 @@ export function SkillDetailView({
 	}
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col bg-[var(--leros-app-bg)] overflow-y-auto">
+		<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-[var(--leros-app-bg)] [scrollbar-gutter:stable]">
 			{/* Top section: back + header + metrics (full width) */}
-			<div className="px-16 pt-4">
+			<div className="min-w-0 px-6 pt-4 lg:px-12 xl:px-16">
 				{/* Back button */}
 				{onBack && (
 					<button
@@ -194,8 +202,8 @@ export function SkillDetailView({
 				)}
 
 				{/* Skill Header */}
-				<div className="flex items-start justify-between mb-5">
-					<div className="flex gap-4">
+				<div className="mb-5 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+					<div className="flex min-w-0 gap-4">
 						{/* Icon */}
 						{skill.icon ? (
 							<img
@@ -208,8 +216,8 @@ export function SkillDetailView({
 								<span className="text-[28px] font-bold">{skill.name.charAt(0).toUpperCase()}</span>
 							</div>
 						)}
-						<div>
-							<h1 className="text-xl font-bold leading-tight text-[var(--leros-text-strong)] mb-1">
+						<div className="min-w-0">
+							<h1 className="mb-1 break-words text-xl font-bold leading-tight text-[var(--leros-text-strong)]">
 								{skill.name}
 							</h1>
 							{skill.category && (
@@ -218,7 +226,7 @@ export function SkillDetailView({
 								</span>
 							)}
 							{skill.description && (
-								<p className="mt-2 text-xs leading-relaxed text-[var(--leros-text-muted)] max-w-2xl">
+								<p className="mt-2 max-w-2xl [overflow-wrap:anywhere] text-xs leading-relaxed text-[var(--leros-text-muted)]">
 									{skill.description}
 								</p>
 							)}
@@ -227,7 +235,7 @@ export function SkillDetailView({
 
 					{/* Action buttons — install for marketplace, use+menu for installed */}
 					{skill.source === "installed" ? (
-						<div className="flex items-center gap-1.5">
+						<div className="flex shrink-0 items-center gap-1.5">
 							<Button
 								size="sm"
 								onClick={() => onUse?.(skill.skill_id)}
@@ -265,7 +273,7 @@ export function SkillDetailView({
 							onClick={handleInstall}
 							disabled={installing || installed}
 							className={cn(
-								"rounded-lg px-4 py-2 text-xs font-medium shadow-sm transition-all",
+								"shrink-0 rounded-lg px-4 py-2 text-xs font-medium shadow-sm transition-all",
 								installed
 									? "bg-green-50 text-green-600 border border-green-200 hover:bg-green-50"
 									: "bg-[var(--leros-primary)] text-white hover:bg-[var(--leros-primary)]/90 hover:shadow-md",
@@ -311,10 +319,10 @@ export function SkillDetailView({
 			</div>
 
 			{/* Bottom section: tabs + sidebar side by side */}
-			<div className="flex min-h-0 flex-1">
+			<div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-6 px-6 lg:px-12 xl:grid-cols-[minmax(0,1fr)_16rem] xl:px-16">
 				{/* Left: tabbed content */}
-				<div className="flex-1 min-w-0 px-16">
-					<Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+				<div className="min-w-0">
+					<Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0 w-full">
 						<div className="border-b border-[var(--leros-control-border)] mb-5">
 							<TabsList variant="line" className="gap-6">
 								<TabsTrigger
@@ -339,11 +347,11 @@ export function SkillDetailView({
 						</div>
 
 						{/* Overview Tab — markdown-rendered SKILL.md body */}
-						<TabsContent value="overview" className="outline-none">
+						<TabsContent value="overview" className="min-w-0 outline-none">
 							{skill.skill_md ? (
 								<MarkdownRenderer
 									content={skill.skill_md}
-									className="prose prose-slate prose-sm max-w-none prose-headings:text-[var(--leros-text-strong)] prose-p:text-xs prose-p:leading-relaxed prose-p:text-[var(--leros-text-muted)] prose-pre:overflow-x-auto prose-pre:rounded-xl prose-pre:border prose-pre:border-slate-800 prose-pre:bg-slate-950 prose-pre:p-4 prose-pre:text-slate-100 prose-pre:shadow-sm [&_:not(pre)>code]:rounded [&_:not(pre)>code]:bg-slate-100 [&_:not(pre)>code]:px-1.5 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:text-[11px] [&_:not(pre)>code]:font-medium [&_:not(pre)>code]:text-slate-800 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-[13px] [&_pre_code]:leading-6 [&_pre_code]:text-slate-100"
+									className="prose prose-slate prose-sm min-w-0 max-w-none [overflow-wrap:anywhere] prose-headings:text-[var(--leros-text-strong)] prose-p:text-xs prose-p:leading-relaxed prose-p:text-[var(--leros-text-muted)] prose-p:my-1 prose-pre:overflow-x-auto prose-pre:rounded-xl prose-pre:border prose-pre:border-slate-800 prose-pre:bg-slate-950 prose-pre:p-4 prose-pre:text-slate-100 prose-pre:shadow-sm [&>*]:min-w-0 [&_:not(pre)>code]:break-words [&_:not(pre)>code]:rounded [&_:not(pre)>code]:bg-slate-100 [&_:not(pre)>code]:px-1.5 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:text-[11px] [&_:not(pre)>code]:font-medium [&_:not(pre)>code]:text-slate-800 [&_pre]:max-w-full [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-[13px] [&_pre_code]:leading-6 [&_pre_code]:text-slate-100"
 								/>
 							) : (
 								<div className="flex flex-col items-center justify-center py-10 text-[var(--leros-text-subtle)]">
@@ -354,16 +362,16 @@ export function SkillDetailView({
 						</TabsContent>
 
 						{/* Files Tab */}
-						<TabsContent value="files" className="outline-none">
+						<TabsContent value="files" className="min-w-0 outline-none">
 							{skill.files && skill.files.length > 0 ? (
 								<ul className="space-y-1">
 									{skill.files.map((file) => (
 										<li
 											key={file}
-											className="flex items-center gap-2 rounded-md px-3 py-2 text-xs text-[var(--leros-text-muted)] hover:bg-[var(--leros-surface-soft)] transition-colors"
+											className="flex min-w-0 items-center gap-2 rounded-md px-3 py-2 text-xs text-[var(--leros-text-muted)] transition-colors hover:bg-[var(--leros-surface-soft)]"
 										>
 											<FileText className="size-3.5 shrink-0 text-[var(--leros-text-subtle)]" />
-											<span className="font-mono">{file}</span>
+											<span className="min-w-0 break-all font-mono">{file}</span>
 										</li>
 									))}
 								</ul>
@@ -377,7 +385,7 @@ export function SkillDetailView({
 						</TabsContent>
 
 						{/* Versions Tab */}
-						<TabsContent value="versions" className="outline-none">
+						<TabsContent value="versions" className="min-w-0 outline-none">
 							<div className="flex flex-col items-center justify-center py-10 text-[var(--leros-text-subtle)]">
 								<Calendar className="size-6 mb-2 opacity-40" />
 								<p className="text-xs">版本历史</p>
@@ -392,7 +400,7 @@ export function SkillDetailView({
 				</div>
 
 				{/* Right Sidebar — top aligns with tab bar, no left border */}
-				<aside className="w-64 shrink-0 flex flex-col gap-4 px-12 py-3">
+				<aside className="flex min-w-0 flex-col gap-4 py-3 xl:w-64">
 					{/* Related Skills */}
 					{relatedSkills.length > 0 && (
 						<section>

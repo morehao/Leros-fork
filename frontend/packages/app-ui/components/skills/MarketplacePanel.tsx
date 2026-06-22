@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@leros/ui/lib/utils";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { skillMarketplaceApi, type SkillMarketplaceItem } from "@leros/store";
 import { SkillCard } from "./SkillCard";
@@ -150,13 +150,6 @@ export function MarketplacePanel({
               </button>
             );
           })}
-          <button
-            type="button"
-            className="flex items-center gap-1 whitespace-nowrap rounded-full border border-[var(--leros-control-border)] bg-transparent px-3.5 py-1 text-xs font-medium text-[var(--leros-text-muted)] hover:border-[var(--leros-text-subtle)] hover:text-[var(--leros-text)] transition-colors shrink-0"
-          >
-            <SlidersHorizontal className="size-3" />
-            筛选
-          </button>
         </div>
       </div>
 

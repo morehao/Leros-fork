@@ -29,6 +29,7 @@ export interface SearchSkillMarketplaceParams {
 export interface InstallSkillParams {
   source: string;
   skill_id: string;
+  version?: string;
 }
 
 export interface InstallSkillResponse {
@@ -61,6 +62,7 @@ export interface UninstallSkillResponse {
 export interface SkillDetailParams {
   source: string;
   skill_id: string;
+  version?: string;
 }
 
 export interface SkillDetailData {

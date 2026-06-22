@@ -49,6 +49,13 @@ type SkillSource interface {
 	CanHandle(identifier string) bool
 }
 
+// VersionedSource 支持版本化获取的 Skill 源接口。
+// 实现此接口的源可处理指定版本的安装请求。
+type VersionedSource interface {
+	SkillSource
+	FetchVersion(ctx context.Context, identifier string, version string) (*SkillBundle, error)
+}
+
 // SourceRouter 管理一组远程 Skill 源，按优先级路由请求。
 type SourceRouter struct {
 	sources []SkillSource
@@ -60,7 +67,7 @@ func NewSourceRouter() *SourceRouter {
 		sources: []SkillSource{
 			NewUrlSource(),
 			NewGitHubSource(),
-			NewSkillsShSource(),
+			NewClawHubSource(),
 		},
 	}
 }
@@ -120,6 +127,61 @@ func (r *SourceRouter) Fetch(ctx context.Context, identifier string) (*SkillBund
 	return nil, fmt.Errorf("no source could handle identifier %q", identifier)
 }
 
+// FetchVersion 按优先级遍历源，返回第一个成功获取的指定版本 SkillBundle。
+// 对于实现了 VersionedSource 的源，会传入 version；否则退化为不带版本的 Fetch。
+func (r *SourceRouter) FetchVersion(ctx context.Context, identifier, version string) (*SkillBundle, error) {
+	for _, src := range r.sources {
+		if !src.CanHandle(identifier) {
+			continue
+		}
+		if vs, ok := src.(VersionedSource); ok && version != "" {
+			bundle, err := vs.FetchVersion(ctx, identifier, version)
+			if err != nil {
+				continue
+			}
+			return bundle, nil
+		}
+		bundle, err := src.Fetch(ctx, identifier)
+		if err != nil {
+			continue
+		}
+		return bundle, nil
+	}
+	return nil, fmt.Errorf("no source could handle identifier %q", identifier)
+}
+
+// FetchFromSource 从指定 sourceID 的源中获取 Skill。
+// 如果 identifier 能被该源直接处理，则直接获取；否则按名称搜索后再获取。
+// 当源实现了 VersionedSource 且 version 非空时，会传入版本参数。
+func (r *SourceRouter) FetchFromSource(ctx context.Context, identifier, sourceID, version string) (*SkillBundle, error) {
+	for _, src := range r.sources {
+		if src.SourceID() != sourceID {
+			continue
+		}
+		if src.CanHandle(identifier) {
+			if vs, ok := src.(VersionedSource); ok && version != "" {
+				return vs.FetchVersion(ctx, identifier, version)
+			}
+			return src.Fetch(ctx, identifier)
+		}
+		// 源无法直接处理该 identifier（如短名对 ClawHub），按名称搜索。
+		results, err := src.Search(ctx, identifier, 5)
+		if err != nil {
+			return nil, fmt.Errorf("search %q in source %q: %w", identifier, sourceID, err)
+		}
+		for _, meta := range results {
+			if strings.EqualFold(meta.Name, identifier) || strings.EqualFold(meta.SkillID, identifier) {
+				if vs, ok := src.(VersionedSource); ok && version != "" {
+					return vs.FetchVersion(ctx, meta.Identifier, version)
+				}
+				return r.Fetch(ctx, meta.Identifier)
+			}
+		}
+		return nil, fmt.Errorf("skill %q not found in source %q", identifier, sourceID)
+	}
+	return nil, fmt.Errorf("source %q not found in router", sourceID)
+}
+
 // ResolveShortName 对不含 "/" 的短名称，按 source 优先级依次搜索精确匹配后安装。
 func (r *SourceRouter) ResolveShortName(ctx context.Context, name string) (*SkillBundle, error) {
 	if strings.Contains(name, "/") {
@@ -136,19 +198,6 @@ func (r *SourceRouter) ResolveShortName(ctx context.Context, name string) (*Skil
 			if strings.EqualFold(meta.Name, name) {
 				return r.Fetch(ctx, meta.Identifier)
 			}
-		}
-	}
-
-	// 兜底：直接搜索 skills.sh。
-	skillsSh := NewSkillsShSource()
-	results, err := skillsSh.Search(ctx, name, 10)
-	if err != nil {
-		return nil, fmt.Errorf("search skills.sh for %q: %w", name, err)
-	}
-
-	for _, meta := range results {
-		if strings.EqualFold(meta.Name, name) {
-			return r.Fetch(ctx, meta.Identifier)
 		}
 	}
 
