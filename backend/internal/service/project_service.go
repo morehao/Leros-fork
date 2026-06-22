@@ -57,10 +57,13 @@ func NewProjectService(db *gorm.DB, giteaClient *gitea.Client, giteaCfg *config.
 	}
 }
 
-func NewProjectServiceWithInferrer(db *gorm.DB, inferrer AssistantInferrer) contract.ProjectService {
+func NewProjectServiceWithInferrer(db *gorm.DB, inferrer AssistantInferrer, giteaClient *gitea.Client, giteaCfg *config.GiteaConfig, env string) contract.ProjectService {
 	return &projectService{
-		db:       db,
-		inferrer: inferrer,
+		db:          db,
+		inferrer:    inferrer,
+		giteaClient: giteaClient,
+		giteaCfg:    giteaCfg,
+		env:         env,
 	}
 }
 

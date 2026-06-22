@@ -91,7 +91,7 @@ func SetupRouter(cfg config.Config, eventbus eventbus.EventBus, db *gorm.DB) *gi
 		logs.Info("Session routes registered successfully")
 
 		// projectService := service.NewProjectService(db, giteaClient, cfg.Gitea, cfg.Env)
-		projectService := service.NewProjectServiceWithInferrer(db, inferrer)
+		projectService := service.NewProjectServiceWithInferrer(db, inferrer, giteaClient, cfg.Gitea, cfg.Env)
 		handler.RegisterProjectRoutes(v1, projectService)
 		logs.Info("Project routes registered successfully")
 
@@ -130,7 +130,7 @@ func SetupRouter(cfg config.Config, eventbus eventbus.EventBus, db *gorm.DB) *gi
 
 		// Start background consumers
 		if !cfg.Server.DisableEventConsumers {
-			go runnable.StartSessionArtifactDeclared(context.Background(), eventbus, db)
+			go runnable.StartSessionArtifactDeclared(context.Background(), eventbus, db, giteaClient)
 			logs.Info("Session artifact declared runnable started")
 			go runnable.StartSessionRunStarted(context.Background(), sessionService, eventbus)
 			logs.Info("Session run started runnable started")
