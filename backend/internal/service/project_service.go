@@ -732,7 +732,13 @@ func (s *projectService) initRepoStructure(ctx context.Context, fullName string)
 
 var visibleFolders = []string{"artifacts/", "uploads/"}
 
+var ignoredFiles = map[string]bool{".gitkeep": true}
+
 func isPathAllowed(filePath string) bool {
+	name := filepath.Base(filePath)
+	if ignoredFiles[name] {
+		return false
+	}
 	for _, prefix := range visibleFolders {
 		if strings.HasPrefix(filePath, prefix) {
 			return true
