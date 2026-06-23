@@ -1149,8 +1149,8 @@ export class ChatActionImpl {
 		attachments?: Attachment[],
 	) => {
 		const trimmed = content.trim();
-		if (!trimmed || !projectId) return;
-		if (this.#get().isGenerating) return;
+		if (!trimmed || !projectId) return null;
+		if (this.#get().isGenerating) return null;
 
 		try {
 			const res = await workApi.newMessage({
@@ -1159,7 +1159,7 @@ export class ChatActionImpl {
 				attachments: mapOutgoingAttachments(attachments),
 			});
 			const data = res.data.data;
-			if (!data?.project_id || !data?.task_id || !data?.session_id) return;
+			if (!data?.project_id || !data?.task_id || !data?.session_id) return null;
 
 			(this.#set as (partial: Record<string, unknown>) => void)({
 				activeProjectId: data.project_id,
@@ -1181,8 +1181,10 @@ export class ChatActionImpl {
 				fetchProjectDetail?: (projectId: string) => Promise<void>;
 			};
 			await fullState.fetchProjectDetail?.(data.project_id);
+			return data;
 		} catch (err) {
 			console.error("sendProjectMessage error:", err);
+			return null;
 		}
 	};
 

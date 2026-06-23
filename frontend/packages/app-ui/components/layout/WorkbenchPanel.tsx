@@ -545,9 +545,17 @@ export function WorkbenchPanel({ navigation }: { navigation?: AppNavigation }) {
 										size="icon"
 										onClick={handleSend}
 										disabled={isGenerating || !input.trim()}
-										className="size-9 rounded-xl bg-[var(--leros-primary)] text-white shadow-sm hover:bg-[var(--leros-primary-strong)] disabled:bg-[var(--leros-chat-control-bg)] disabled:text-[var(--leros-text-subtle)]"
+										// 中文注释：与项目任务 ChatInput 发送按钮保持一致，使用黑色主色而非品牌紫
+										className="size-9 min-w-0 rounded-xl bg-black !text-white shadow-sm hover:bg-blue-700 disabled:bg-[#f3f3f4] disabled:!text-slate-400"
 									>
-										<SendHorizonal className="size-4" />
+										<SendHorizonal
+											className={cn(
+												"size-3.5",
+												input.trim() && !isGenerating
+													? "fill-white stroke-white text-white"
+													: "fill-none stroke-current text-current",
+											)}
+										/>
 									</Button>
 								</div>
 							</div>
