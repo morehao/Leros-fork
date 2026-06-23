@@ -29,6 +29,7 @@ export interface SearchSkillMarketplaceParams {
 export interface InstallSkillParams {
   source: string;
   skill_id: string;
+  version?: string;
 }
 
 export interface InstallSkillResponse {
@@ -61,6 +62,7 @@ export interface UninstallSkillResponse {
 export interface SkillDetailParams {
   source: string;
   skill_id: string;
+  version?: string;
 }
 
 export interface SkillDetailData {
@@ -123,7 +125,7 @@ export const skillMarketplaceApi = {
   search: (params: SearchSkillMarketplaceParams) =>
     apiClient.get<BackendDataResponse<SearchSkillMarketplaceResponse>>(
       "/skill-marketplace/search",
-      { params: cleanParams(params) },
+      { timeout: 180_000, params: cleanParams(params) },
     ),
 
   install: (params: InstallSkillParams) =>
@@ -148,6 +150,7 @@ export const skillMarketplaceApi = {
     apiClient.post<BackendDataResponse<SkillDetailData>>(
       "/skill-marketplace/skill-detail",
       params,
+      { timeout: 120_000 },
     ),
 
   import: (params: ImportSkillParams) =>

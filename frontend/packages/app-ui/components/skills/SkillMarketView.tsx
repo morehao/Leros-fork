@@ -23,6 +23,7 @@ export function SkillMarketView({ navigation }: { navigation?: AppNavigation }) 
 	const [activeTab, setActiveTab] = useState<"marketplace" | "mine">("marketplace");
 	const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
 	const [selectedSource, setSelectedSource] = useState<string>("Leros");
+	const [selectedVersion, setSelectedVersion] = useState<string | undefined>(undefined);
 	const [importDialogOpen, setImportDialogOpen] = useState(false);
 	const replaceSkillDirective = useChatStore((s) => s.replaceSkillDirective);
 	const { activeProjectId, projects, setProjectRoute } = useLayoutStore((s) => ({
@@ -51,6 +52,7 @@ export function SkillMarketView({ navigation }: { navigation?: AppNavigation }) 
 		(skill: SkillMarketplaceItem) => {
 			setSelectedSkillId(skill.skill_id);
 			setSelectedSource(activeTab === "mine" ? "installed" : skill.source_type || "Leros");
+			setSelectedVersion(skill.version || undefined);
 		},
 		[activeTab],
 	);
@@ -62,6 +64,7 @@ export function SkillMarketView({ navigation }: { navigation?: AppNavigation }) 
 	const handleSkillClick = useCallback((skillId: string, sourceType?: string) => {
 		setSelectedSkillId(skillId);
 		setSelectedSource(sourceType || "Leros");
+		setSelectedVersion(undefined);
 	}, []);
 
 	const handleUse = useCallback(
@@ -94,6 +97,7 @@ export function SkillMarketView({ navigation }: { navigation?: AppNavigation }) 
 				<SkillDetailView
 					skillId={selectedSkillId}
 					source={selectedSource}
+					version={selectedVersion}
 					onBack={handleBack}
 					onSkillClick={handleSkillClick}
 					onUse={handleUse}
