@@ -5,6 +5,7 @@ import { projectFileApi, useChatStore, useLayoutStore } from "@leros/store";
 import { cn } from "@leros/ui/lib/utils";
 import {
 	Bot,
+	ChevronDown,
 	ChevronsLeft,
 	ChevronsLeftRightEllipsis,
 	ChevronsRight,
@@ -41,6 +42,8 @@ import {
 } from "./project-file-type-icon";
 import {
 	collectSelectableFiles,
+	type FileSource,
+	getFileSource,
 	normalizeProjectFileTree,
 	type ProjectFileNode,
 	sortProjectFilesByUploadedTimeDesc,
@@ -147,7 +150,6 @@ export function ProjectPage({
 		resetLocalMessages,
 	} = useChatStore((s) => s);
 
-	const [artifactFiles, setArtifactFiles] = useState<ProjectFileNode[]>([]);
 	const [projectFiles, setProjectFiles] = useState<ProjectFileNode[]>([]);
 	const [rightSidebarWidth, setRightSidebarWidth] = useState(PROJECT_RIGHT_SIDEBAR_DEFAULT_WIDTH);
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
@@ -208,37 +210,13 @@ export function ProjectPage({
 		}
 	}, [resolvedProjectId, fetchProjectDetail, projects.length]);
 
-	const flatArtifactFiles = useMemo(() => collectSelectableFiles(artifactFiles), [artifactFiles]);
-
-	useEffect(() => {
-		if (!resolvedProjectId) {
-			setArtifactFiles([]);
-			return;
-		}
-
-		const projectId = resolvedProjectId;
-		let cancelled = false;
-
-		async function fetchArtifactFiles() {
-			try {
-				const response = await projectFileApi.list({
-					projectId,
-					path: "artifacts",
-				});
-				if (cancelled) return;
-				setArtifactFiles(normalizeProjectFileTree(response.data.data));
-			} catch (err) {
-				if (cancelled) return;
-				console.error("ProjectPage fetch artifact files error:", err);
-				setArtifactFiles([]);
-			}
-		}
-
-		fetchArtifactFiles();
-		return () => {
-			cancelled = true;
-		};
-	}, [resolvedProjectId]);
+	const flatArtifactFiles = useMemo(
+		() =>
+			sortProjectFilesByUploadedTimeDesc(
+				collectSelectableFiles(projectFiles).filter((f) => getFileSource(f.path) === "task"),
+			),
+		[projectFiles],
+	);
 
 	const refreshProjectFiles = async () => {
 		if (!resolvedProjectId) return;
@@ -768,12 +746,6 @@ function ProjectFiles({
 	files: ProjectFileNode[];
 	onRefresh: () => Promise<void>;
 }) {
-	const groupByDirectory = (nodes: ProjectFileNode[]): ProjectFileNode[] => {
-		return nodes.filter((node) => node.type === "directory");
-	};
-
-	const directoryGroups = useMemo(() => groupByDirectory(files), [files]);
-
 	const [previewFile, setPreviewFile] = useState<ProjectFileNode | null>(null);
 	const [previewState, setPreviewState] = useState<FilePreviewState>({
 		status: "idle",
@@ -781,6 +753,7 @@ function ProjectFiles({
 	const [uploading, setUploading] = useState(false);
 	const [uploadError, setUploadError] = useState<string | null>(null);
 	const [searchKeyword, setSearchKeyword] = useState("");
+	const [fileSourceFilter, setFileSourceFilter] = useState<"all" | FileSource>("all");
 	const [drawerWidth, setDrawerWidth] = useState(FILE_PREVIEW_DRAWER_DEFAULT_WIDTH);
 	const drawerRef = useRef<HTMLDivElement>(null);
 
@@ -789,36 +762,18 @@ function ProjectFiles({
 		setPreviewState({ status: "idle" });
 	};
 
-	const handleGroupFiles = (dir: ProjectFileNode) => {
-		const collectFiles = (node: ProjectFileNode): ProjectFileNode[] => {
-			const result: ProjectFileNode[] = [];
-			for (const child of node.children ?? []) {
-				if (child.type === "file") {
-					result.push(child);
-				} else {
-					result.push(...collectFiles(child));
-				}
-			}
-			return result;
-		};
-
-		const allFiles = collectFiles(dir);
+	const allFlatFiles = useMemo(() => {
+		const allFiles = collectSelectableFiles(files);
 		const keyword = searchKeyword.trim().toLowerCase();
-		return !keyword
-			? sortProjectFilesByUploadedTimeDesc(allFiles)
-			: sortProjectFilesByUploadedTimeDesc(
-					allFiles.filter((file) => file.name.toLowerCase().includes(keyword)),
-				);
-	};
-
-	const filteredGroups = useMemo(() => {
-		const keyword = searchKeyword.trim().toLowerCase();
-		if (!keyword) return directoryGroups;
-		return directoryGroups.filter((dir) => {
-			const files = dir.children ?? [];
-			return files.some((f) => f.name.toLowerCase().includes(keyword));
-		});
-	}, [searchKeyword, directoryGroups]);
+		let filtered = allFiles;
+		if (fileSourceFilter !== "all") {
+			filtered = filtered.filter((f) => getFileSource(f.path) === fileSourceFilter);
+		}
+		if (keyword) {
+			filtered = filtered.filter((file) => file.name.toLowerCase().includes(keyword));
+		}
+		return sortProjectFilesByUploadedTimeDesc(filtered);
+	}, [files, searchKeyword, fileSourceFilter]);
 
 	useEffect(() => {
 		if (!previewFile) {
@@ -989,6 +944,18 @@ function ProjectFiles({
 								className="h-10 w-64 rounded-xl border border-[var(--leros-control-border)] bg-white pl-9 pr-4 text-sm outline-none transition-colors focus:border-[var(--leros-primary)]"
 							/>
 						</div>
+						<div className="relative">
+							<select
+								value={fileSourceFilter}
+								onChange={(event) => setFileSourceFilter(event.target.value as "all" | FileSource)}
+								className="h-10 cursor-pointer appearance-none rounded-xl border border-[var(--leros-control-border)] bg-white py-0 pl-3.5 pr-9 text-sm outline-none transition-colors focus:border-[var(--leros-primary)]"
+							>
+								<option value="all">全部</option>
+								<option value="task">任务文件</option>
+								<option value="upload">上传文件</option>
+							</select>
+							<ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-[var(--leros-text-muted)]" />
+						</div>
 						<label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-[var(--leros-primary)] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90">
 							<FileText className="size-4" />
 							上传
@@ -1014,91 +981,78 @@ function ProjectFiles({
 					</div>
 				)}
 
-				{filteredGroups.length === 0 ? (
+				{allFlatFiles.length === 0 ? (
 					<div className="px-6 py-16 text-center text-sm text-[var(--leros-text-muted)]">
 						暂无文件
 					</div>
 				) : (
-					<div className="flex flex-col gap-8">
-						{filteredGroups.map((dir) => {
-							const groupFiles = handleGroupFiles(dir);
-							return (
-								<div key={dir.path}>
-									<h3 className="mb-4 text-lg font-semibold text-[var(--leros-text-strong)]">
-										{dir.name}
-									</h3>
-									<div className="overflow-hidden rounded-2xl border border-[var(--leros-control-border)] bg-white">
-										<div className="grid grid-cols-[minmax(0,1fr)_120px_180px_220px] border-b border-[var(--leros-control-border)] bg-[var(--leros-surface-soft)] px-6 py-4 text-xs font-semibold uppercase tracking-wider text-[var(--leros-text-muted)]">
-											<div>名称</div>
-											<div>大小</div>
-											<div>上传时间</div>
-											<div className="text-right">操作</div>
+					<div className="overflow-hidden rounded-2xl border border-[var(--leros-control-border)] bg-white">
+						<div className="grid grid-cols-[minmax(0,1fr)_90px_120px_180px_180px] border-b border-[var(--leros-control-border)] bg-[var(--leros-surface-soft)] px-6 py-4 text-xs font-semibold uppercase tracking-wider text-[var(--leros-text-muted)]">
+							<div>名称</div>
+							<div>类型</div>
+							<div>大小</div>
+							<div>创建时间</div>
+							<div className="text-right">操作</div>
+						</div>
+						<div className="divide-y divide-[var(--leros-control-border)]/60">
+							{allFlatFiles.map((file) => (
+								<div
+									key={file.path}
+									className="grid grid-cols-[minmax(0,1fr)_90px_120px_180px_180px] items-center px-6 py-5 transition-colors hover:bg-[var(--leros-primary-softer)]/25"
+								>
+									<button
+										type="button"
+										data-file-preview-trigger
+										onClick={() => setPreviewFile(file)}
+										className="flex min-w-0 cursor-pointer items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors hover:bg-[var(--leros-primary-softer)]/50"
+										title="查看"
+									>
+										<div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[var(--leros-primary-softer)] text-[var(--leros-primary)]">
+											<ProjectFileTypeIcon fileName={file.name} />
 										</div>
-
-										{groupFiles.length === 0 ? (
-											<div className="px-6 py-10 text-center text-sm text-[var(--leros-text-muted)]">
-												暂无文件
-											</div>
-										) : (
-											<div className="divide-y divide-[var(--leros-control-border)]/60">
-												{groupFiles.map((file) => (
-													<div
-														key={file.path}
-														className="grid grid-cols-[minmax(0,1fr)_120px_180px_220px] items-center px-6 py-5 transition-colors hover:bg-[var(--leros-primary-softer)]/25"
-													>
-														<button
-															type="button"
-															data-file-preview-trigger
-															onClick={() => setPreviewFile(file)}
-															className="flex min-w-0 cursor-pointer items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors hover:bg-[var(--leros-primary-softer)]/50"
-															title="查看"
-														>
-															<div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[var(--leros-primary-softer)] text-[var(--leros-primary)]">
-																<ProjectFileTypeIcon fileName={file.name} />
-															</div>
-															<div className="min-w-0">
-																<p className="truncate text-sm font-semibold text-[var(--leros-text-strong)]">
-																	{file.name}
-																</p>
-																<p className="truncate text-xs text-[var(--leros-text-muted)]">
-																	/{file.path}
-																</p>
-															</div>
-														</button>
-														<div className="text-sm text-[var(--leros-text-muted)]">
-															{formatBytes(file.size)}
-														</div>
-														<div className="text-sm text-[var(--leros-text-muted)]">
-															{formatTime(file.modTime)}
-														</div>
-														<div className="flex items-center justify-end gap-2">
-															<button
-																type="button"
-																onClick={() => setPreviewFile(file)}
-																className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-[var(--leros-text-muted)] transition-colors hover:bg-[var(--leros-primary-softer)] hover:text-[var(--leros-primary)]"
-																title="查看"
-															>
-																<Eye className="size-4" />
-																查看
-															</button>
-															<button
-																type="button"
-																onClick={() => handleDownload(file)}
-																className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-[var(--leros-text-muted)] transition-colors hover:bg-[var(--leros-primary-softer)] hover:text-[var(--leros-primary)]"
-																title="下载"
-															>
-																<Download className="size-4" />
-																下载
-															</button>
-														</div>
-													</div>
-												))}
-											</div>
-										)}
+										<div className="min-w-0">
+											<p className="truncate text-sm font-semibold text-[var(--leros-text-strong)]">
+												{file.name}
+											</p>
+											<p className="truncate text-xs text-[var(--leros-text-muted)]">
+												/{file.path}
+											</p>
+										</div>
+									</button>
+									<div className="text-sm">
+										<span className="inline-block rounded-md bg-[var(--leros-surface-soft)] px-2.5 py-1 text-xs font-medium text-[var(--leros-text-muted)]">
+											{getFileSource(file.path) === "task" ? "任务文件" : "上传文件"}
+										</span>
+									</div>
+									<div className="text-sm text-[var(--leros-text-muted)]">
+										{formatBytes(file.size)}
+									</div>
+									<div className="text-sm text-[var(--leros-text-muted)]">
+										{formatTime(file.modTime)}
+									</div>
+									<div className="flex items-center justify-end gap-2">
+										<button
+											type="button"
+											onClick={() => setPreviewFile(file)}
+											className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-[var(--leros-text-muted)] transition-colors hover:bg-[var(--leros-primary-softer)] hover:text-[var(--leros-primary)]"
+											title="查看"
+										>
+											<Eye className="size-4" />
+											查看
+										</button>
+										<button
+											type="button"
+											onClick={() => handleDownload(file)}
+											className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-[var(--leros-text-muted)] transition-colors hover:bg-[var(--leros-primary-softer)] hover:text-[var(--leros-primary)]"
+											title="下载"
+										>
+											<Download className="size-4" />
+											下载
+										</button>
 									</div>
 								</div>
-							);
-						})}
+							))}
+						</div>
 					</div>
 				)}
 			</div>

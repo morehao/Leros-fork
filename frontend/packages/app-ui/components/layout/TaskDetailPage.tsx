@@ -161,6 +161,7 @@ export function TaskDetailPage({
 		try {
 			const res = await projectFileApi.list({
 				projectId: resolvedProjectId,
+				path: "artifacts",
 			});
 			setTaskFiles(normalizeProjectFileTree(res.data.data));
 		} catch (err) {

@@ -53,6 +53,13 @@ export function collectSelectableFiles(nodes: ProjectFileNode[]): ProjectFileNod
 	return result;
 }
 
+export type FileSource = "task" | "upload";
+
+export function getFileSource(path: string): FileSource {
+	const normalized = normalizeFilePath(path);
+	return normalized.startsWith("artifacts") ? "task" : "upload";
+}
+
 export function sortProjectFilesByUploadedTimeDesc(files: ProjectFileNode[]): ProjectFileNode[] {
 	return [...files].sort((left, right) => right.modTime - left.modTime);
 }
