@@ -55,3 +55,15 @@ type GeneratedToken struct {
 	Name  string `json:"name"`
 	Token string `json:"token"`
 }
+
+type RepoEntry struct {
+	Path string `json:"path"`
+	Type string `json:"type"` // "tree" | "blob"
+	Size int64  `json:"size"`
+	SHA  string `json:"sha"`
+}
+
+type RepoTreeResponse struct {
+	SHA   string      `json:"sha"`
+	Items []RepoEntry `json:"tree"`
+}
