@@ -39,6 +39,7 @@ func SetupRouter(cfg config.Config, eventbus eventbus.EventBus, db *gorm.DB) *gi
 	r := gin.New()
 	r.Use(middleware.CORS())
 	r.Use(middleware.CallerMiddleware(cfg.Server.JWT.Secret, db))
+	r.Use(middleware.ClientUpdateMiddleware(cfg.ClientUpdate))
 	r.Use(middleware.Logger(".Ping", "metrics"))
 	r.Use(ygmiddleware.Recovery())
 
@@ -72,6 +73,9 @@ func SetupRouter(cfg config.Config, eventbus eventbus.EventBus, db *gorm.DB) *gi
 
 		handler.RegisterWorkerAuthRoutes(v1, cfg.WorkerAuth, cfg.Server.JWT.Secret, db)
 		logs.Info("Worker auth routes registered successfully")
+
+		handler.RegisterClientUpdateRoutes(v1, cfg.ClientUpdate)
+		logs.Info("Client update routes registered successfully")
 
 		var workerProvisioningService *service.WorkerProvisioningService
 		if db != nil {

@@ -7,6 +7,13 @@ server:
   jwt:
     secret: "dev-leros-jwt-secret"
 
+client_update:
+  desktop:
+    min_supported_version: "0.1.0"
+    latest_version: "0.1.12"
+    update_url: "https://xxx/stable"
+    force_message: "当前客户端版本过低，请更新后继续使用"
+
 database:
   url: "postgres://leros_dev_user:leros_dev_password@localhost:5433/leros_dev_db?sslmode=disable"
   debug: true
@@ -35,3 +42,8 @@ storage:
   static_api_key: "leros-static-api-key"
   sign_secret: "leros-local-presign"
   base_url: "http://localhost:8080"
+translation:
+  provider: "deepseek"
+  api_key: "${LLM_API_KEY}"
+  model: "deepseek-v4-flash"
+  base_url: "https://api.yygu.cn/v3/llm.chat/"
