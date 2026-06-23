@@ -18,10 +18,12 @@ import (
 )
 
 var (
-	skillJSON  bool
-	skillForce bool
-	skillYes   bool
-	skillLimit int
+	skillJSON    bool
+	skillForce   bool
+	skillYes     bool
+	skillLimit   int
+	skillSource  string
+	skillVersion string
 )
 
 // newSourceRouter 创建包含内置源的 SourceRouter（内置源优先级最高）。
@@ -30,7 +32,7 @@ func newSourceRouter() *fetch.SourceRouter {
 		fetch.NewBuiltinSource(cliServerAddr()),
 		fetch.NewUrlSource(),
 		fetch.NewGitHubSource(),
-		fetch.NewSkillsShSource(),
+		fetch.NewClawHubSource(),
 	)
 }
 
@@ -44,7 +46,7 @@ func newSkillCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skill",
 		Short: "Manage skills from remote sources",
-		Long:  "Search, install, list, and uninstall skills.\n\nInstall from GitHub, skills.sh, or direct URL.",
+		Long:  "Search, install, list, and uninstall skills.\n\nInstall from GitHub, ClawHub, or direct URL.",
 	}
 
 	installCmd := &cobra.Command{
@@ -53,9 +55,11 @@ func newSkillCommand() *cobra.Command {
 		Long: `Install a skill by identifier.
 
 Identifier formats:
-  <name>                  Short name, resolved via skills.sh exact match
+  <name>                  Short name, resolved via builtin or ClawHub
   owner/repo/path         GitHub repository path
-  https://.../SKILL.md    Direct URL to a SKILL.md file`,
+  https://.../SKILL.md    Direct URL to a SKILL.md file
+
+Use --source to force a specific source and --version to install a specific version.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInstall(args[0])
@@ -86,6 +90,8 @@ Identifier formats:
 
 	installCmd.Flags().BoolVar(&skillForce, "force", false, "Overwrite existing skill")
 	installCmd.Flags().BoolVar(&skillYes, "yes", false, "Skip confirmation prompts")
+	installCmd.Flags().StringVar(&skillSource, "source", "", "Force a specific source (Leros, ClawHub, github, url)")
+	installCmd.Flags().StringVar(&skillVersion, "version", "", "Install a specific version (tag/branch for GitHub sources)")
 
 	searchCmd.Flags().IntVar(&skillLimit, "limit", 10, "Maximum number of results")
 	searchCmd.Flags().BoolVar(&skillJSON, "json", false, "Output in JSON format")
@@ -110,11 +116,22 @@ func runInstall(identifier string) error {
 	ctx := context.Background()
 	router := newSourceRouter()
 
-	// 先尝试 Fetch（BuiltinSource.CanHandle 捕获短名，GitHubSource/UrlSource 捕获完整标识符）。
-	bundle, err := router.Fetch(ctx, identifier)
-	if err != nil && !strings.Contains(identifier, "/") {
-		// 短名 Fetch 失败时，回退到按名称搜索所有源。
-		bundle, err = router.ResolveShortName(ctx, identifier)
+	var bundle *fetch.SkillBundle
+	var err error
+
+	switch {
+	case skillSource != "":
+		// 指定了源：从指定源获取（支持短名搜索）。
+		bundle, err = router.FetchFromSource(ctx, identifier, skillSource, skillVersion)
+	case skillVersion != "":
+		// 只指定了版本：按优先级遍历源，传入版本参数。
+		bundle, err = router.FetchVersion(ctx, identifier, skillVersion)
+	default:
+		// 无额外参数：先尝试 Fetch，短名失败时回退到按名称搜索。
+		bundle, err = router.Fetch(ctx, identifier)
+		if err != nil && !strings.Contains(identifier, "/") {
+			bundle, err = router.ResolveShortName(ctx, identifier)
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("resolve skill: %w", err)

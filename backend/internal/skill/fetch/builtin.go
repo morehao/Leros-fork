@@ -33,12 +33,13 @@ func NewBuiltinSource(serverAddr string) *BuiltinSource {
 
 // SourceID 返回源标识。
 func (s *BuiltinSource) SourceID() string {
-	return "leros_builtin"
+	return "Leros"
 }
 
-// CanHandle 处理不含 "/" 和 "://" 的短名称/skill_id。
+// CanHandle 处理不含 "/"、"://" 和 ":" 的短名称/skill_id。
+// ":" 用于标识外部源（如 clawhub:<slug>@<version>）。
 func (s *BuiltinSource) CanHandle(identifier string) bool {
-	return !strings.Contains(identifier, "/") && !strings.Contains(identifier, "://")
+	return !strings.Contains(identifier, "/") && !strings.Contains(identifier, "://") && !strings.Contains(identifier, ":")
 }
 
 // Search 调用服务端 marketplace 搜索接口。
@@ -150,6 +151,41 @@ func (s *BuiltinSource) Inspect(ctx context.Context, identifier string) (*SkillM
 		}
 	}
 	return nil, fmt.Errorf("builtin skill %q not found", identifier)
+}
+
+// FetchVersion 实现 fetch.VersionedSource。
+// 下载内置 Skill 的指定版本（通过查询参数传递），服务端目前可能忽略版本参数。
+func (s *BuiltinSource) FetchVersion(ctx context.Context, identifier, version string) (*SkillBundle, error) {
+	u := fmt.Sprintf("http://%s/v1/skill-marketplace/skills/%s/download",
+		s.serverAddr, url.PathEscape(identifier))
+	if version != "" {
+		u += "?version=" + url.QueryEscape(version)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("builtin fetch: create request: %w", err)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("builtin fetch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("builtin skill %q version %q not found", identifier, version)
+		}
+		return nil, fmt.Errorf("builtin fetch: server returned status %d", resp.StatusCode)
+	}
+
+	zipBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("builtin fetch: read zip: %w", err)
+	}
+
+	return s.extractBuiltinZip(zipBytes, identifier)
 }
 
 // extractBuiltinZip 解压服务端返回的 ZIP（无根前缀，文件直接在 ZIP 根目录）。

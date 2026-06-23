@@ -37,7 +37,7 @@ func (g *GitHubSource) CanHandle(identifier string) bool {
 	return strings.Count(identifier, "/") >= 1 && !strings.Contains(identifier, "://")
 }
 
-// Search GitHubSource 不支持搜索，搜索统一走 skills.sh。
+// Search GitHubSource 不支持搜索
 func (g *GitHubSource) Search(ctx context.Context, query string, limit int) ([]SkillMeta, error) {
 	return nil, nil
 }
@@ -234,4 +234,20 @@ func (g *GitHubSource) Inspect(ctx context.Context, identifier string) (*SkillMe
 	defer os.RemoveAll(bundle.TempDir)
 	meta := bundle.Meta
 	return &meta, nil
+}
+
+// FetchVersion 实现 fetch.VersionedSource。
+// 使用 version 作为分支/tag 名下载 GitHub 仓库（如 v1.2.3 或 main）。
+func (g *GitHubSource) FetchVersion(ctx context.Context, identifier, version string) (*SkillBundle, error) {
+	parts := strings.SplitN(identifier, "/", 3)
+	if len(parts) < 3 {
+		return nil, fmt.Errorf("invalid GitHub identifier %q: expected owner/repo/path", identifier)
+	}
+	owner, repo, skillPath := parts[0], parts[1], parts[2]
+
+	if version == "" {
+		return g.Fetch(ctx, identifier)
+	}
+
+	return g.fetchBranch(ctx, owner, repo, version, skillPath)
 }

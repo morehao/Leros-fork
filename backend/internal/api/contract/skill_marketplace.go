@@ -15,6 +15,7 @@ type SkillPackageDownload struct {
 type InstallSkillRequest struct {
 	Source  string `json:"source" binding:"required"`
 	SkillID string `json:"skill_id" binding:"required"`
+	Version string `json:"version,omitempty"`
 }
 
 // InstallSkillResponse Skill 安装响应（异步，仅表示已接受）。
@@ -38,11 +39,19 @@ type ImportSkillResponse struct {
 type SkillMarketplaceService interface {
 	SearchSkillMarketplace(ctx context.Context, req *SearchSkillMarketplaceRequest) (*SearchSkillMarketplaceResponse, error)
 	DownloadBuiltinSkill(ctx context.Context, skillID string) (*SkillPackageDownload, error)
+	DownloadSkillPackage(ctx context.Context, req *DownloadSkillRequest) (*SkillPackageDownload, error)
 	InstallSkill(ctx context.Context, req *InstallSkillRequest) (*InstallSkillResponse, error)
 	InstalledSkills(ctx context.Context, req *InstalledSkillsRequest) (*InstalledSkillsResponse, error)
 	UninstallSkill(ctx context.Context, req *UninstallSkillRequest) (*UninstallSkillResponse, error)
 	GetSkillDetail(ctx context.Context, req *SkillDetailRequest) (*SkillDetailResponse, error)
 	ImportSkill(ctx context.Context, req *ImportSkillRequest) (*ImportSkillResponse, error)
+}
+
+// DownloadSkillRequest 从缓存下载 Skill 包的请求。
+type DownloadSkillRequest struct {
+	Source  string `form:"source" json:"source"`
+	SkillID string `form:"skill_id" json:"skill_id"`
+	Version string `form:"version" json:"version"`
 }
 
 // SearchSkillMarketplaceRequest Skill 市场搜索请求。
@@ -111,6 +120,7 @@ type UninstallSkillResponse struct {
 type SkillDetailRequest struct {
 	Source  string `json:"source" binding:"required"`   // "Leros" for marketplace, "installed" for installed skills
 	SkillID string `json:"skill_id" binding:"required"` // skill identifier
+	Version string `json:"version,omitempty"`           // optional version, default "latest" for external sources
 }
 
 // SkillDetailResponse Skill 详情响应，包含完整元数据和 SKILL.md 正文。

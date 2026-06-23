@@ -40,7 +40,7 @@ export function WorkbenchPanel({ navigation }: { navigation?: AppNavigation }) {
 	} = useLayoutStore((s) => s);
 	const { startSessionResponseStream, resetLocalMessages, addUploadedAttachment, isGenerating } =
 		useChatStore((s) => s);
-	const { isHydrated, isAuthenticated, openAuthDialog, requireAuth, user } = useAuth();
+	const { isAuthenticated, openAuthDialog, requireAuth } = useAuth();
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const attachmentsRef = useRef<Attachment[]>([]);
 	const [input, setInput] = useState("");
@@ -117,7 +117,10 @@ export function WorkbenchPanel({ navigation }: { navigation?: AppNavigation }) {
 
 	const uploadWorkbenchAttachment = useCallback(async (file: File) => {
 		// 无项目时先走通用上传，后续随 NewMessage 自动关联到新建项目。
-		const response = await projectFileApi.uploadLoose({ file, purpose: "attachment" });
+		const response = await projectFileApi.uploadLoose({
+			file,
+			purpose: "attachment",
+		});
 		const payload = response.data;
 		const attachment: Attachment = {
 			id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -283,7 +286,7 @@ export function WorkbenchPanel({ navigation }: { navigation?: AppNavigation }) {
 						<Bell className="size-5" />
 						<span className="absolute right-2 top-2 size-2 rounded-full border-2 border-[var(--leros-app-bg)] bg-destructive" />
 					</button> */}
-					<button
+					{/* <button
 						type="button"
 						onClick={() => {
 							if (!isAuthenticated) openAuthDialog("login");
@@ -292,7 +295,7 @@ export function WorkbenchPanel({ navigation }: { navigation?: AppNavigation }) {
 						disabled={!isHydrated}
 					>
 						{!isHydrated ? "" : isAuthenticated ? (user?.name ?? "已登录") : "登录"}
-					</button>
+					</button> */}
 				</div>
 			</header>
 
@@ -542,9 +545,17 @@ export function WorkbenchPanel({ navigation }: { navigation?: AppNavigation }) {
 										size="icon"
 										onClick={handleSend}
 										disabled={isGenerating || !input.trim()}
-										className="size-9 rounded-xl bg-[var(--leros-primary)] text-white shadow-sm hover:bg-[var(--leros-primary-strong)] disabled:bg-[var(--leros-chat-control-bg)] disabled:text-[var(--leros-text-subtle)]"
+										// 中文注释：与项目任务 ChatInput 发送按钮保持一致，使用黑色主色而非品牌紫
+										className="size-9 min-w-0 rounded-xl bg-black !text-white shadow-sm hover:bg-blue-700 disabled:bg-[#f3f3f4] disabled:!text-slate-400"
 									>
-										<SendHorizonal className="size-4" />
+										<SendHorizonal
+											className={cn(
+												"size-3.5",
+												input.trim() && !isGenerating
+													? "fill-white stroke-white text-white"
+													: "fill-none stroke-current text-current",
+											)}
+										/>
 									</Button>
 								</div>
 							</div>

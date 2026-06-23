@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import type { AppNavigation } from "../layout";
 import {
 	getProjectChatLayoutClasses,
 	type ProjectChatLayoutMode,
@@ -32,10 +33,12 @@ export const PROJECT_ATTACHMENT_ACCEPT = "image/*,.pdf,.txt,.md,.json,.xlsx,.xls
 export function ChatInput({
 	variant = "default",
 	projectLayoutMode = "sidebar-expanded",
+	navigation,
 }: {
 	variant?: "default" | "project";
 	/** 项目页聊天区布局：随右侧栏展开/收起切换宽度与留白 */
 	projectLayoutMode?: ProjectChatLayoutMode;
+	navigation?: AppNavigation;
 }) {
 	const {
 		activeSessionId,
@@ -69,16 +72,24 @@ export function ChatInput({
 	const canSend = Boolean(inputText.trim());
 	const pendingApproval = findPendingApproval(messageIds, messagesMap, activeSessionId);
 
-	const submitMessage = useCallback(() => {
+	const submitMessage = useCallback(async () => {
 		// 中文注释：输入区先做一次生成态拦截，避免回车绕过按钮态再次触发发送。
 		if (isGenerating) return;
 		// 仅上传附件而无文字时接口会报错，因此必须输入内容才可发送
 		if (inputText.trim()) {
 			if (isProjectVariant && currentView === "project") {
-				sendProjectMessage(inputText, activeProjectId, inputAttachments);
-			} else {
-				sendMessage(inputText, inputAttachments);
+				const taskEntry = await sendProjectMessage(inputText, activeProjectId, inputAttachments);
+				if (taskEntry?.project_id && taskEntry?.task_id) {
+					// 中文注释：项目首页创建出真实任务后，立即跳到任务详情页，避免仍停留在项目首页的新建任务视图。
+					navigation?.goToTaskDetail(
+						taskEntry.project_id,
+						taskEntry.task_id,
+						taskEntry.session_id ?? null,
+					);
+				}
+				return;
 			}
+			sendMessage(inputText, inputAttachments);
 		}
 	}, [
 		inputText,
@@ -87,6 +98,7 @@ export function ChatInput({
 		currentView,
 		activeProjectId,
 		isGenerating,
+		navigation,
 		sendMessage,
 		sendProjectMessage,
 	]);
@@ -413,7 +425,7 @@ function ApprovalDecisionInput({
 							<ApprovalStatusBadge approval={approval} />
 						</div>
 						<div className="text-[15px] leading-6 text-slate-950">
-							允许 Leros 执行
+							允许 Lework 执行
 							<span className="mx-1 font-medium">{approval.description}</span>
 							吗？
 						</div>
