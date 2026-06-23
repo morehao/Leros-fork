@@ -1,0 +1,225 @@
+package service
+
+import (
+	"testing"
+
+	"github.com/insmtx/Leros/backend/internal/api/contract"
+	"github.com/insmtx/Leros/backend/internal/infra/gitea"
+)
+
+func TestIsPathAllowed(t *testing.T) {
+	tests := []struct {
+		path    string
+		allowed bool
+	}{
+		{"uploads/readme.md", true},
+		{"uploads/sub/dir/file.txt", true},
+		{"outputs/report.pdf", true},
+		{"outputs/", true},
+		{"src/main.go", false},
+		{"", false},
+		{"uploads", false},
+		{"outputs", false},
+		{"config.yaml", false},
+	}
+
+	for _, tt := range tests {
+		result := isPathAllowed(tt.path)
+		if result != tt.allowed {
+			t.Errorf("isPathAllowed(%q) = %v, want %v", tt.path, result, tt.allowed)
+		}
+	}
+}
+
+func TestBuildFileTree(t *testing.T) {
+	entries := []gitea.RepoEntry{
+		{Path: "uploads", Type: "tree"},
+		{Path: "uploads/readme.md", Type: "blob", Size: 100},
+		{Path: "uploads/images", Type: "tree"},
+		{Path: "uploads/images/logo.png", Type: "blob", Size: 2048},
+		{Path: "outputs", Type: "tree"},
+		{Path: "outputs/report.pdf", Type: "blob", Size: 4096},
+	}
+
+	roots := buildFileTree(entries)
+
+	if len(roots) != 2 {
+		t.Fatalf("expected 2 roots, got %d", len(roots))
+	}
+
+	// root: uploads
+	uploads := roots[0]
+	if uploads.Name != "uploads" || uploads.Type != "directory" {
+		t.Errorf("root[0] expected uploads directory, got %+v", uploads)
+	}
+	if len(uploads.Children) != 2 {
+		t.Errorf("uploads expected 2 children, got %d", len(uploads.Children))
+	}
+
+	// uploads/readme.md
+	if uploads.Children[0].Name != "readme.md" || uploads.Children[0].Type != "file" {
+		t.Errorf("uploads child[0] expected readme.md file, got %+v", uploads.Children[0])
+	}
+
+	// uploads/images
+	images := uploads.Children[1]
+	if images.Name != "images" || images.Type != "directory" {
+		t.Errorf("uploads child[1] expected images directory, got %+v", images)
+	}
+	if len(images.Children) != 1 {
+		t.Errorf("images expected 1 child, got %d", len(images.Children))
+	}
+
+	// uploads/images/logo.png
+	if images.Children[0].Name != "logo.png" || images.Children[0].Type != "file" || images.Children[0].Size != 2048 {
+		t.Errorf("images child expected logo.png file size=2048, got %+v", images.Children[0])
+	}
+
+	// root: outputs
+	outputs := roots[1]
+	if outputs.Name != "outputs" || outputs.Type != "directory" {
+		t.Errorf("root[1] expected outputs directory, got %+v", outputs)
+	}
+	if len(outputs.Children) != 1 {
+		t.Errorf("outputs expected 1 child, got %d", len(outputs.Children))
+	}
+	if outputs.Children[0].Name != "report.pdf" || outputs.Children[0].Type != "file" || outputs.Children[0].Size != 4096 {
+		t.Errorf("outputs child expected report.pdf file size=4096, got %+v", outputs.Children[0])
+	}
+}
+
+func TestBuildFileTree_Empty(t *testing.T) {
+	roots := buildFileTree(nil)
+	if len(roots) != 0 {
+		t.Errorf("expected empty roots, got %v", roots)
+	}
+}
+
+func TestBuildFileTree_DeepNested(t *testing.T) {
+	entries := []gitea.RepoEntry{
+		{Path: "uploads/a/b/c", Type: "tree"},
+		{Path: "uploads/a/b/c/deep.txt", Type: "blob", Size: 42},
+	}
+
+	roots := buildFileTree(entries)
+
+	if len(roots) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(roots))
+	}
+	a := roots[0]
+	if a.Name != "uploads" || a.Type != "directory" {
+		t.Errorf("root expected uploads, got %+v", a)
+	}
+	if len(a.Children) != 1 {
+		t.Fatalf("uploads expected 1 child, got %d", len(a.Children))
+	}
+	b := a.Children[0]
+	if b.Name != "a" || b.Type != "directory" {
+		t.Errorf("b expected a directory, got %+v", b)
+	}
+	if len(b.Children) != 1 {
+		t.Fatalf("a expected 1 child, got %d", len(b.Children))
+	}
+	c := b.Children[0]
+	if c.Name != "b" || c.Type != "directory" {
+		t.Errorf("c expected b directory, got %+v", c)
+	}
+	if len(c.Children) != 1 {
+		t.Fatalf("b expected 1 child, got %d", len(c.Children))
+	}
+	d := c.Children[0]
+	if d.Name != "c" || d.Type != "directory" {
+		t.Errorf("d expected c directory, got %+v", d)
+	}
+	if len(d.Children) != 1 {
+		t.Fatalf("c expected 1 child, got %d", len(d.Children))
+	}
+	if d.Children[0].Name != "deep.txt" || d.Children[0].Type != "file" {
+		t.Errorf("deep expected deep.txt file, got %+v", d.Children[0])
+	}
+}
+
+func TestFilterByParentPaths_Root(t *testing.T) {
+	entries := []gitea.RepoEntry{
+		{Path: "uploads/readme.md", Type: "blob", Size: 100},
+	}
+	roots := buildFileTree(entries)
+	result := filterByParentPaths(roots, "")
+	if len(result) != 1 || result[0].Name != "uploads" {
+		t.Errorf("expected 1 root uploads, got %v", result)
+	}
+}
+
+func TestFilterByParentPaths_SubDir(t *testing.T) {
+	entries := []gitea.RepoEntry{
+		{Path: "uploads/images/logo.png", Type: "blob", Size: 2048},
+	}
+	roots := buildFileTree(entries)
+	result := filterByParentPaths(roots, "uploads/images")
+	if len(result) != 1 || result[0].Name != "logo.png" {
+		t.Errorf("expected 1 file logo.png, got %v", result)
+	}
+}
+
+func TestFilterByParentPaths_NotFound(t *testing.T) {
+	entries := []gitea.RepoEntry{
+		{Path: "uploads/readme.md", Type: "blob", Size: 100},
+	}
+	roots := buildFileTree(entries)
+	result := filterByParentPaths(roots, "nonexistent")
+	if result != nil {
+		t.Errorf("expected nil for nonexistent path, got %v", result)
+	}
+}
+
+func TestFilterByParentPaths_HasLeadingSlash(t *testing.T) {
+	entries := []gitea.RepoEntry{
+		{Path: "uploads/readme.md", Type: "blob", Size: 100},
+	}
+	roots := buildFileTree(entries)
+	result := filterByParentPaths(roots, "/uploads/")
+	if len(result) != 1 || result[0].Name != "readme.md" {
+		t.Errorf("expected 1 file readme.md, got %v", result)
+	}
+}
+
+func TestFilterByParentPaths_RootSlash(t *testing.T) {
+	entries := []gitea.RepoEntry{
+		{Path: "uploads/readme.md", Type: "blob", Size: 100},
+	}
+	roots := buildFileTree(entries)
+	result := filterByParentPaths(roots, "/")
+	if len(result) != 1 || result[0].Name != "uploads" {
+		t.Errorf("expected 1 root uploads for /, got %v", result)
+	}
+}
+
+func TestMimeTypeByExt(t *testing.T) {
+	tests := []struct {
+		filename string
+		want     string
+	}{
+		{"image.png", "image/png"},
+		{"data.json", "application/json"},
+	}
+
+	for _, tt := range tests {
+		got := mimeTypeByExt(tt.filename)
+		if got != tt.want {
+			t.Errorf("mimeTypeByExt(%q) = %q, want %q", tt.filename, got, tt.want)
+		}
+	}
+
+	if got := mimeTypeByExt("script.js"); got == "" {
+		t.Errorf("mimeTypeByExt(\"script.js\") should return non-empty mime type")
+	}
+
+	if got := mimeTypeByExt("noext"); got != "" {
+		t.Errorf("mimeTypeByExt(\"noext\") = %q, want \"\"", got)
+	}
+}
+
+// compile-time check: mockProjectServiceForAddFile implements contract.ProjectService
+type _assertMockImplementsProjectService = contract.ProjectService
+
+var _ _assertMockImplementsProjectService = (*mockProjectServiceForAddFile)(nil)
