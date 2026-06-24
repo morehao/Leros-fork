@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,12 +19,16 @@ import (
 	"github.com/insmtx/Leros/backend/internal/infra/db"
 	"github.com/insmtx/Leros/backend/internal/infra/filestore"
 	eventbus "github.com/insmtx/Leros/backend/internal/infra/mq"
+	skillcatalog "github.com/insmtx/Leros/backend/internal/skill/catalog"
 	"github.com/insmtx/Leros/backend/internal/worker/protocol"
 	"github.com/insmtx/Leros/backend/pkg/dm"
 	"github.com/insmtx/Leros/backend/types"
 	"github.com/ygpkg/yg-go/encryptor/snowflake"
 	"github.com/ygpkg/yg-go/logs"
 )
+
+var skillInvokeSRVRE = regexp.MustCompile(`^\s*/([A-Za-z][A-Za-z0-9_-]*)(\s|$)`)
+
 
 // MessagePoster 无状态的消息投递器，负责消息创建、统计更新、事件发布、Worker 任务投递。
 // 多个 goroutine 可安全并发使用。
@@ -91,6 +96,8 @@ func (p *MessagePoster) PostMessage(
 	}
 
 	logs.DebugContextf(ctx, "published message events for session=%s", session.PublicID)
+
+	p.writeSkillInvokeResources(ctx, session, message)
 
 	if err := p.publishWorkerTask(ctx, session, message); err != nil {
 		return nil, err
@@ -411,11 +418,9 @@ func (p *MessagePoster) publishWorkerTask(ctx context.Context, session *types.Se
 			RunID:     requestID,
 		},
 		Route: protocol.RouteContext{
-			OrgID:       orgID,
-			SessionID:   session.PublicID,
-			SessionDBID: session.ID,
-			MessageDBID: message.ID,
-			WorkerID:    session.AllocatedAssistantID,
+			OrgID:     orgID,
+			SessionID: session.PublicID,
+			WorkerID:  session.AllocatedAssistantID,
 		},
 		Body: protocol.WorkerTaskBody{
 			TaskType: protocol.TaskTypeAgentRun,
@@ -641,4 +646,79 @@ Thumbs.db
 			logs.WarnContextf(ctx, "[message_poster] init gitea file %s failed: %v", f.path, err)
 		}
 	}
+}
+
+// writeSkillInvokeResources parses /skill tokens from message content and writes
+// message_resource records so that skill invocations are tracked at the service layer
+// before the worker task is published.
+func (p *MessagePoster) writeSkillInvokeResources(ctx context.Context, session *types.Session, message *types.SessionMessage) {
+	if p.db == nil || message == nil || session == nil {
+		return
+	}
+	tokens := parseSkillSlashTokens(message.Content)
+	if len(tokens) == 0 {
+		return
+	}
+	entries := resolveSkillEntries(tokens)
+	if len(entries) == 0 {
+		return
+	}
+	records := make([]*types.MessageResource, 0, len(entries))
+	for seq, name := range entries {
+		records = append(records, &types.MessageResource{
+			MessageID:    message.ID,
+			SessionID:    session.ID,
+			ResourceType: "skill",
+			ResourceCode: name,
+			ResourceName: name,
+			InvokeType:   "slash_command",
+			Seq:          seq,
+		})
+	}
+	if err := db.BatchCreateMessageResources(ctx, p.db, records); err != nil {
+		logs.WarnContextf(ctx, "write skill invoke message_resource failed: count=%d error=%v", len(records), err)
+	} else {
+		logs.InfoContextf(ctx, "Skill invoke message_resource written: count=%d", len(records))
+	}
+}
+
+// parseSkillSlashTokens parses leading /skill tokens from message content.
+// The pattern matches lifecyclecontext.skillInvokeRE.
+func parseSkillSlashTokens(content string) []string {
+	if content == "" {
+		return nil
+	}
+	var tokens []string
+	remaining := content
+	for {
+		m := skillInvokeSRVRE.FindStringSubmatch(remaining)
+		if m == nil {
+			break
+		}
+		tokens = append(tokens, m[1])
+		remaining = strings.TrimSpace(remaining[len(m[0]):])
+	}
+	return tokens
+}
+
+// resolveSkillEntries resolves skill tokens to manifest names, deduplicating
+// case-insensitively and keeping only valid skill names in the catalog.
+func resolveSkillEntries(tokens []string) []string {
+	if len(tokens) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(tokens))
+	result := make([]string, 0, len(tokens))
+	for _, name := range tokens {
+		key := strings.ToLower(name)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if _, err := skillcatalog.Get(name); err != nil {
+			continue
+		}
+		result = append(result, name)
+	}
+	return result
 }

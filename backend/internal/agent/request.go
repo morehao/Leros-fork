@@ -56,7 +56,6 @@ type ActorContext struct {
 // ConversationContext carries recent conversation state when available.
 type ConversationContext struct {
 	ID       string         `json:"id,omitempty"`
-	DBID     uint           `json:"-"` // database primary key of the session
 	Messages []InputMessage `json:"messages,omitempty"`
 }
 
@@ -80,7 +79,6 @@ type InputContext struct {
 type InputMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
-	DBID    uint   `json:"-"` // database primary key of the session_message record
 }
 
 // Attachment describes an input attachment made available to the run.

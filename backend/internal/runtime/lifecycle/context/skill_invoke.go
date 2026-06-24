@@ -7,11 +7,8 @@ import (
 	"strings"
 
 	"github.com/insmtx/Leros/backend/internal/agent"
-	infradb "github.com/insmtx/Leros/backend/internal/infra/db"
 	skillcatalog "github.com/insmtx/Leros/backend/internal/skill/catalog"
-	"github.com/insmtx/Leros/backend/types"
 	"github.com/ygpkg/yg-go/logs"
-	"gorm.io/gorm"
 )
 
 // skillInvokeRE matches consecutive /skill tokens at the beginning of a user message.
@@ -19,32 +16,17 @@ import (
 // The token must be followed by whitespace or end-of-line to avoid matching paths like /path/to/file.
 var skillInvokeRE = regexp.MustCompile(`^\s*/([A-Za-z][A-Za-z0-9_-]*)(\s|$)`)
 
-// ErrSkillInactive is returned when a skill is not in active status.
-var ErrSkillInactive = fmt.Errorf("skill is not active")
 
 // ApplyInvokedSkills parses leading /skill tokens from user messages, loads
-// matching SKILL.md content, validates skill status, strips tokens, and
-// writes message_resource records.
+// matching SKILL.md content, strips tokens, and rewrites messages with the skill prompt.
 //
 // The same skill is injected only once across all messages. Later messages that
 // mention an already loaded skill only have the token stripped.
 //
-// Each message is rewritten independently using the same prompt format for one
-// or many newly loaded skills.
-//
-// It returns an error when a requested skill is missing, has a manifest
-// mismatch, or is not active.
-//
-// db is optional; when nil, skill status check and message_resource writing are skipped.
-func ApplyInvokedSkills(ctx context.Context, db *gorm.DB, req *agent.RequestContext) error {
+// It returns an error when a requested skill is missing or has a manifest mismatch.
+func ApplyInvokedSkills(ctx context.Context, req *agent.RequestContext) error {
 	if req == nil || len(req.Input.Messages) == 0 {
 		return nil
-	}
-
-	activeCodes, dbErr := getActiveSkillCodes(ctx, db)
-	if dbErr != nil {
-		logs.WarnContextf(ctx, "Skill invoke active check unavailable: db error=%v", dbErr)
-		activeCodes = nil
 	}
 
 	seenSkills := make(map[string]bool)
@@ -91,10 +73,6 @@ func ApplyInvokedSkills(ctx context.Context, db *gorm.DB, req *agent.RequestCont
 				logs.WarnContextf(ctx, "Skill invoke load failed: msg_index=%d skill=%q error=%v", i, name, err)
 				return err
 			}
-			if activeCodes != nil && !activeCodes[entry.Manifest.Name] {
-				logs.WarnContextf(ctx, "Skill invoke rejected: skill=%q is not active", entry.Manifest.Name)
-				return fmt.Errorf("%w: %s", ErrSkillInactive, entry.Manifest.Name)
-			}
 			entries = append(entries, entry)
 			logs.InfoContextf(ctx, "Skill invoke loaded: msg_index=%d skill=%q body_len=%d dir=%s",
 				i, entry.Manifest.Name, len(entry.Body), entry.AbsoluteDir)
@@ -103,26 +81,6 @@ func ApplyInvokedSkills(ctx context.Context, db *gorm.DB, req *agent.RequestCont
 		if len(entries) == 0 {
 			msg.Content = remaining
 			continue
-		}
-
-		if db != nil && msg.DBID != 0 && req.Conversation.DBID != 0 {
-			records := make([]*types.MessageResource, 0, len(entries))
-			for seq, entry := range entries {
-				records = append(records, &types.MessageResource{
-					MessageID:    msg.DBID,
-					SessionID:    req.Conversation.DBID,
-					ResourceType: "skill",
-					ResourceCode: entry.Manifest.Name,
-					ResourceName: entry.Manifest.Name,
-					InvokeType:   "slash_command",
-					Seq:          seq,
-				})
-			}
-			if err := infradb.BatchCreateMessageResources(ctx, db, records); err != nil {
-				logs.WarnContextf(ctx, "Skill invoke write message_resource failed: msg_index=%d error=%v", i, err)
-			} else {
-				logs.InfoContextf(ctx, "Skill invoke message_resource written: msg_index=%d count=%d", i, len(records))
-			}
 		}
 
 		filesMap := make(map[string][]string, len(entries))
@@ -154,13 +112,6 @@ func ApplyInvokedSkills(ctx context.Context, db *gorm.DB, req *agent.RequestCont
 
 	logs.InfoContextf(ctx, "Applied invoked skills: loaded=%d", len(seenSkills))
 	return nil
-}
-
-func getActiveSkillCodes(ctx context.Context, db *gorm.DB) (map[string]bool, error) {
-	if db == nil {
-		return nil, nil
-	}
-	return infradb.GetActiveSkillCodes(ctx, db)
 }
 
 // parseSkillTokens parses consecutive /skill tokens from the start of content.
