@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/insmtx/Leros/backend/internal/worker/identity"
 	"github.com/ygpkg/yg-go/logs"
 )
 
@@ -44,6 +45,7 @@ func (s PushWorkspaceStep) Run(ctx context.Context, state *State) error {
 
 	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", "task: agent run artifacts")
 	commitCmd.Dir = repoDir
+	commitCmd.Env = identity.GitAuthorEnv()
 	if output, err := commitCmd.CombinedOutput(); err != nil {
 		logs.ErrorContextf(ctx, "git commit artifacts: %v: %s", err, strings.TrimSpace(string(output)))
 		return nil
