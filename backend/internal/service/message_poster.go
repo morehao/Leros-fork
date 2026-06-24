@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/insmtx/Leros/backend/internal/infra/db"
 	"github.com/insmtx/Leros/backend/internal/infra/filestore"
 	eventbus "github.com/insmtx/Leros/backend/internal/infra/mq"
+	skilltoken "github.com/insmtx/Leros/backend/internal/skill"
 	skillcatalog "github.com/insmtx/Leros/backend/internal/skill/catalog"
 	"github.com/insmtx/Leros/backend/internal/worker/protocol"
 	"github.com/insmtx/Leros/backend/pkg/dm"
@@ -26,9 +26,6 @@ import (
 	"github.com/ygpkg/yg-go/encryptor/snowflake"
 	"github.com/ygpkg/yg-go/logs"
 )
-
-var skillInvokeSRVRE = regexp.MustCompile(`^\s*/([A-Za-z][A-Za-z0-9_-]*)(\s|$)`)
-
 
 // MessagePoster 无状态的消息投递器，负责消息创建、统计更新、事件发布、Worker 任务投递。
 // 多个 goroutine 可安全并发使用。
@@ -655,7 +652,7 @@ func (p *MessagePoster) writeSkillInvokeResources(ctx context.Context, session *
 	if p.db == nil || message == nil || session == nil {
 		return
 	}
-	tokens := parseSkillSlashTokens(message.Content)
+	tokens := skilltoken.ParseTokensOnly(message.Content)
 	if len(tokens) == 0 {
 		return
 	}
@@ -680,25 +677,6 @@ func (p *MessagePoster) writeSkillInvokeResources(ctx context.Context, session *
 	} else {
 		logs.InfoContextf(ctx, "Skill invoke message_resource written: count=%d", len(records))
 	}
-}
-
-// parseSkillSlashTokens parses leading /skill tokens from message content.
-// The pattern matches lifecyclecontext.skillInvokeRE.
-func parseSkillSlashTokens(content string) []string {
-	if content == "" {
-		return nil
-	}
-	var tokens []string
-	remaining := content
-	for {
-		m := skillInvokeSRVRE.FindStringSubmatch(remaining)
-		if m == nil {
-			break
-		}
-		tokens = append(tokens, m[1])
-		remaining = strings.TrimSpace(remaining[len(m[0]):])
-	}
-	return tokens
 }
 
 // resolveSkillEntries resolves skill tokens to manifest names, deduplicating
