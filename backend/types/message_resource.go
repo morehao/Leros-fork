@@ -5,15 +5,14 @@ import "gorm.io/gorm"
 // MessageResource records which resource (skill/MCP/tool/etc.) a message used.
 type MessageResource struct {
 	gorm.Model
-	ResourcePublicID string         `gorm:"column:resource_public_id;type:varchar(255);not null;uniqueIndex"`
-	MessageID        uint           `gorm:"column:message_id;type:bigint;not null;index"`
-	SessionID        uint           `gorm:"column:session_id;type:bigint;not null;index"`
-	ResourceType     string         `gorm:"column:resource_type;type:varchar(50);not null;index"`
-	ResourceCode     string         `gorm:"column:resource_code;type:varchar(255);not null;index"`
-	ResourceName     string         `gorm:"column:resource_name;type:varchar(255);not null"`
-	InvokeType       string         `gorm:"column:invoke_type;type:varchar(50);not null"`
-	Seq              int            `gorm:"column:seq;type:integer;not null;default:0"`
-	Meta             ObjectMetadata `gorm:"column:meta;type:jsonb"`
+	ResourceID   string `gorm:"column:resource_id;type:varchar(255);not null;index"`  // DB primary key of the resource (empty if not found)
+	MessageID    uint   `gorm:"column:message_id;type:bigint;not null;index"`         // FK to leros_session_message.id
+	SessionID    uint   `gorm:"column:session_id;type:bigint;not null;index"`         // FK to leros_session.id
+	ResourceType string `gorm:"column:resource_type;type:varchar(50);not null;index"` // skill / MCP / tool / ...
+	ResourceKey  string `gorm:"column:resource_key;type:varchar(255);not null;index"` // {source}:{skill_id} composite key
+	ResourceName string `gorm:"column:resource_name;type:varchar(255);not null"`      // resource display name
+	InvokeType   string `gorm:"column:invoke_type;type:varchar(50);not null"`         // slash_command / mention / auto / ...
+	Seq          int    `gorm:"column:seq;type:integer;not null;default:0"`           // order within the same message
 }
 
 // TableName specifies the database table name for MessageResource.
