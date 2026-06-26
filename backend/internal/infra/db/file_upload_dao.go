@@ -2,8 +2,6 @@ package db
 
 import (
 	"context"
-	"errors"
-	"strings"
 
 	"gorm.io/gorm"
 
@@ -58,24 +56,4 @@ func ListProjectFileUploads(ctx context.Context, db *gorm.DB, orgID uint, projec
 		return nil, err
 	}
 	return files, nil
-}
-
-// GetFileUploadByStoragePath 通过 storage path URI 精确查询 FileUpload 记录。
-func GetFileUploadByStoragePath(ctx context.Context, db *gorm.DB, storagePathURI string) (*types.FileUpload, error) {
-	storagePathURI = strings.TrimSpace(storagePathURI)
-	if storagePathURI == "" {
-		return nil, errors.New("storage path uri is required")
-	}
-
-	var file types.FileUpload
-	err := db.WithContext(ctx).
-		Where("storage_path = ?", storagePathURI).
-		First(&file).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &file, nil
 }

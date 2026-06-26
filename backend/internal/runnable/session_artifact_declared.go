@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	infradb "github.com/insmtx/Leros/backend/internal/infra/db"
+	"github.com/insmtx/Leros/backend/internal/infra/filestore"
 	eventbus "github.com/insmtx/Leros/backend/internal/infra/mq"
 	"github.com/insmtx/Leros/backend/internal/runtime/events"
 	"github.com/insmtx/Leros/backend/internal/worker/protocol"
@@ -179,16 +180,27 @@ func (p *declaredArtifactPersister) PersistDeclaredArtifact(ctx context.Context,
 	}
 
 	if storagePathURI != "" {
+		mimeType := strings.TrimSpace(item.MimeType)
+		fileUpload, err := filestore.RecordUpload(ctx, p.db, filestore.RecordUploadParams{
+			StorageURI:   storagePathURI,
+			Filename:     filename,
+			OriginalName: filename,
+			MimeType:     mimeType,
+			OrgID:        session.OrgID,
+			OwnerID:      session.Uin,
+			FileSize:     item.FileSize,
+			Sha256:       item.Sha256,
+			Purpose:      filestore.PurposeArtifact,
+			Metadata: map[string]interface{}{
+				"worker_id":         route.WorkerID,
+				"project_public_id": projectPublicID,
+			},
+		})
 		pfStoragePath := storagePathURI
-
-		fileUpload, err := infradb.GetFileUploadByStoragePath(ctx, p.db, storagePathURI)
 		if err != nil {
-			logs.WarnContextf(ctx, "persist declared artifact: query file_upload by storage_path failed: %v", err)
-		}
-		if fileUpload != nil {
-			pfStoragePath = fileUpload.StoragePath
+			logs.WarnContextf(ctx, "persist declared artifact: record upload failed: %v", err)
 		} else {
-			logs.WarnContextf(ctx, "persist declared artifact: no file_upload record found for storage_path=%q", storagePathURI)
+			pfStoragePath = fileUpload.StoragePath
 		}
 
 		pf := &types.ProjectFile{
@@ -198,7 +210,7 @@ func (p *declaredArtifactPersister) PersistDeclaredArtifact(ctx context.Context,
 			ProjectPublicID: projectPublicID,
 			Filename:        filename,
 			OriginalName:    filename,
-			MimeType:        strings.TrimSpace(item.MimeType),
+			MimeType:        mimeType,
 			FileSize:        item.FileSize,
 			StoragePath:     pfStoragePath,
 			Sha256:          item.Sha256,
