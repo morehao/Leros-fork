@@ -28,8 +28,4 @@ type ProjectService interface {
 	UploadProjectFile(ctx context.Context, publicID string, reader io.Reader, filename string) (*FileUploadResult, error)
 
 	AddFile(ctx context.Context, publicID string, filePublicID string) error
-
-	PresignArtifactUpload(ctx context.Context, req *PresignArtifactUploadRequest) (*PresignArtifactUploadResponse, error)
-
-	GetStorageConfig(ctx context.Context) (*StorageConfigResponse, error)
 }

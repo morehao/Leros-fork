@@ -29,8 +29,6 @@ type mockProjectServiceForAddFile struct {
 	getProjectFileTreeFn    func(ctx context.Context, publicID string, parentPath string, depth int) ([]*contract.FileTreeNode, error)
 	downloadProjectFileFn   func(ctx context.Context, publicID string, filePath string) (io.ReadCloser, string, int64, error)
 	uploadProjectFileFn     func(ctx context.Context, publicID string, reader io.Reader, filename string) (*contract.FileUploadResult, error)
-	presignArtifactUploadFn func(ctx context.Context, req *contract.PresignArtifactUploadRequest) (*contract.PresignArtifactUploadResponse, error)
-	getStorageConfigFn       func(ctx context.Context) (*contract.StorageConfigResponse, error)
 }
 
 func (m *mockProjectServiceForAddFile) AddFile(ctx context.Context, publicID string, filePublicID string) error {
@@ -94,19 +92,6 @@ func (m *mockProjectServiceForAddFile) DownloadProjectFile(ctx context.Context, 
 func (m *mockProjectServiceForAddFile) UploadProjectFile(ctx context.Context, publicID string, reader io.Reader, filename string) (*contract.FileUploadResult, error) {
 	if m.uploadProjectFileFn != nil {
 		return m.uploadProjectFileFn(ctx, publicID, reader, filename)
-	}
-	return nil, nil
-}
-func (m *mockProjectServiceForAddFile) PresignArtifactUpload(ctx context.Context, req *contract.PresignArtifactUploadRequest) (*contract.PresignArtifactUploadResponse, error) {
-	if m.presignArtifactUploadFn != nil {
-		return m.presignArtifactUploadFn(ctx, req)
-	}
-	return nil, nil
-}
-
-func (m *mockProjectServiceForAddFile) GetStorageConfig(ctx context.Context) (*contract.StorageConfigResponse, error) {
-	if m.getStorageConfigFn != nil {
-		return m.getStorageConfigFn(ctx)
 	}
 	return nil, nil
 }

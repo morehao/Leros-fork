@@ -110,24 +110,3 @@ type AddFileRequest struct {
 	PublicID string `json:"public_id" binding:"required"`
 }
 
-// PresignArtifactUploadRequest Worker 请求产物文件预签名上传 URL 的请求体
-type PresignArtifactUploadRequest struct {
-	Bucket   string `json:"bucket" binding:"required"`
-	Key      string `json:"key" binding:"required"`
-	Filename string `json:"filename" binding:"required"`
-	Sha256   string `json:"sha256"`
-	MimeType string `json:"mime_type"`
-	FileSize int64  `json:"file_size"`
-}
-
-// PresignArtifactUploadResponse Worker 请求产物文件预签名上传 URL 的响应体
-type PresignArtifactUploadResponse struct {
-	UploadURL string `json:"upload_url"`
-	ExpiresAt string `json:"expires_at"`
-}
-
-// StorageConfigResponse Worker 请求 storage 配置的响应体
-type StorageConfigResponse struct {
-	Scheme string `json:"scheme"`
-	Bucket string `json:"bucket"`
-}

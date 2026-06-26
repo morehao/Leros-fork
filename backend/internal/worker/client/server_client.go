@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/insmtx/Leros/backend/internal/api/contract"
 	"github.com/insmtx/Leros/backend/internal/api/dto"
 )
 
@@ -152,26 +151,35 @@ func (c *ServerClient) doGetRaw(ctx context.Context, path string) ([]byte, error
 	return io.ReadAll(io.LimitReader(resp.Body, 100_000_000))
 }
 
-func (c *ServerClient) PresignArtifactUpload(ctx context.Context, req *contract.PresignArtifactUploadRequest) (*contract.PresignArtifactUploadResponse, error) {
-	var resp contract.PresignArtifactUploadResponse
-	if err := c.doPost(ctx, "/v1/internal/artifacts/presign-upload", req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *ServerClient) GetStorageConfig(ctx context.Context) (*contract.StorageConfigResponse, error) {
-	var resp contract.StorageConfigResponse
-	if err := c.doGet(ctx, "/v1/internal/artifacts/storage-config", &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
 func (c *ServerClient) DownloadSkillCache(ctx context.Context, skillID, source, version string) ([]byte, error) {
 	baseURL := c.baseURL + "/v1/skill-marketplace/skills/" + url.PathEscape(skillID) + "/download"
 	reqURL := fmt.Sprintf("%s?source=%s&version=%s", baseURL, url.QueryEscape(source), url.QueryEscape(version))
 	return c.doGetRaw(ctx, reqURL)
+}
+
+// StorageConfig represents storage configuration returned by the server.
+type StorageConfig struct {
+	Scheme string `json:"scheme"`
+	Bucket string `json:"bucket"`
+}
+
+// GetStorageConfig fetches the storage configuration from the server.
+func (c *ServerClient) GetStorageConfig(ctx context.Context) (*StorageConfig, error) {
+	var resp StorageConfig
+	if err := c.doGet(ctx, "/v1/static/storage-config", &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetPresignUploadURL fetches a presigned upload URL for the given bucket and key.
+func (c *ServerClient) GetPresignUploadURL(ctx context.Context, bucket, key string) (string, error) {
+	path := fmt.Sprintf("/v1/static/%s/%s?operation=upload", url.PathEscape(bucket), key)
+	data, err := c.doGetRaw(ctx, path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func (c *ServerClient) setAppKey(req *http.Request) {

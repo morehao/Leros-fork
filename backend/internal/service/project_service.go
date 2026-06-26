@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"gorm.io/gorm"
 
@@ -717,48 +716,6 @@ func (s *projectService) AddFile(ctx context.Context, publicID string, filePubli
 
 func generateProjectPublicID() string {
 	return fmt.Sprintf("prj_%s", snowflake.GenerateIDBase58())
-}
-
-// PresignArtifactUpload 为 Worker 产物文件生成预签名上传 URL
-func (s *projectService) PresignArtifactUpload(ctx context.Context, req *contract.PresignArtifactUploadRequest) (*contract.PresignArtifactUploadResponse, error) {
-	bucket := strings.TrimSpace(req.Bucket)
-	if bucket == "" {
-		return nil, errors.New("bucket is required")
-	}
-	key := strings.TrimSpace(req.Key)
-	if key == "" {
-		return nil, errors.New("key is required")
-	}
-	filename := strings.TrimSpace(req.Filename)
-	if filename == "" {
-		return nil, errors.New("filename is required")
-	}
-
-	defaultBucket := filestore.DefaultBucket()
-	if bucket != defaultBucket {
-		return nil, fmt.Errorf("bucket %q is not allowed, only %q is supported", bucket, defaultBucket)
-	}
-
-	uploadURL, expiresAt, err := filestore.PresignUpload(ctx, bucket, key)
-	if err != nil {
-		return nil, fmt.Errorf("generate presigned upload url: %w", err)
-	}
-
-	return &contract.PresignArtifactUploadResponse{
-		UploadURL: uploadURL,
-		ExpiresAt: expiresAt.Format(time.RFC3339),
-	}, nil
-}
-
-func (s *projectService) GetStorageConfig(_ context.Context) (*contract.StorageConfigResponse, error) {
-	scheme := "s3"
-	if filestore.IsLocal() {
-		scheme = "file"
-	}
-	return &contract.StorageConfigResponse{
-		Scheme: scheme,
-		Bucket: filestore.DefaultBucket(),
-	}, nil
 }
 
 func (s *projectService) buildRepoName(orgID uint, projectPublicID string) string {

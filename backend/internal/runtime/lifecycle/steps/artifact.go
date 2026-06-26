@@ -16,7 +16,6 @@ import (
 	"github.com/ygpkg/storage-go"
 
 	"github.com/insmtx/Leros/backend/internal/agent"
-	"github.com/insmtx/Leros/backend/internal/api/contract"
 	"github.com/insmtx/Leros/backend/internal/runtime/events"
 	"github.com/insmtx/Leros/backend/internal/worker/client"
 	"github.com/insmtx/Leros/backend/internal/worker/identity"
@@ -115,7 +114,7 @@ func (r *WorkspaceArtifactRecorder) Record(ctx context.Context, req *agent.Reque
 	return payloads, nil
 }
 
-func uploadArtifactToServer(ctx context.Context, srv *client.ServerClient, projectPublicID string, record agentworkspace.ArtifactRecord, storageCfg *contract.StorageConfigResponse) (string, error) {
+func uploadArtifactToServer(ctx context.Context, srv *client.ServerClient, projectPublicID string, record agentworkspace.ArtifactRecord, storageCfg *client.StorageConfig) (string, error) {
 	absolute, err := agentworkspace.SafeJoin("", record.RelativePath)
 	if err != nil {
 		return "", err
@@ -145,21 +144,12 @@ func uploadArtifactToServer(ctx context.Context, srv *client.ServerClient, proje
 		storageURI = uri
 	}
 
-	reqBody := contract.PresignArtifactUploadRequest{
-		Bucket:   bucket,
-		Key:      key,
-		Filename: record.Filename,
-		Sha256:   record.Sha256,
-		MimeType: record.MimeType,
-		FileSize: record.FileSize,
-	}
-
-	respData, err := srv.PresignArtifactUpload(ctx, &reqBody)
+	uploadURL, err := srv.GetPresignUploadURL(ctx, bucket, key)
 	if err != nil {
-		return "", fmt.Errorf("request presign upload: %w", err)
+		return "", fmt.Errorf("get presign upload url: %w", err)
 	}
 
-	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, respData.UploadURL, bytes.NewReader(data))
+	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}
