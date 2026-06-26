@@ -146,6 +146,14 @@ func (c *ServerClient) PresignArtifactUpload(ctx context.Context, req *contract.
 	return &resp, nil
 }
 
+func (c *ServerClient) GetStorageConfig(ctx context.Context) (*contract.StorageConfigResponse, error) {
+	var resp contract.StorageConfigResponse
+	if err := c.doGet(ctx, "/v1/internal/artifacts/storage-config", &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *ServerClient) DownloadSkillCache(ctx context.Context, skillID, source, version string) ([]byte, error) {
 	baseURL := c.baseURL + "/v1/skill-marketplace/skills/" + url.PathEscape(skillID) + "/download"
 	reqURL := fmt.Sprintf("%s?source=%s&version=%s", baseURL, url.QueryEscape(source), url.QueryEscape(version))
