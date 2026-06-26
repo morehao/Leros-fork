@@ -105,9 +105,18 @@ func (c *ServerClient) doGet(ctx context.Context, path string, target interface{
 		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 
+	var apiResp apiResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+
+	if apiResp.Code != dto.CodeSuccess {
+		return fmt.Errorf("api error [%d]: %s", apiResp.Code, apiResp.Message)
+	}
+
 	if target != nil {
-		if err := json.Unmarshal(body, target); err != nil {
-			return fmt.Errorf("decode response: %w", err)
+		if err := json.Unmarshal(apiResp.Data, target); err != nil {
+			return fmt.Errorf("decode data: %w", err)
 		}
 	}
 
