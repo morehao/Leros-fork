@@ -93,10 +93,20 @@ func (p *MessagePoster) PostMessage(
 	// Trigger title update asynchronously via local call.
 	if session.OrgID > 0 {
 		go func() {
-			if p.titleUpdater != nil {
-				if err := p.titleUpdater.HandleSessionTitleRequest(context.Background(), session.PublicID); err != nil {
-					logs.Warnf("title update failed for session %s: %v", session.PublicID, err)
-				}
+			if p.titleUpdater == nil {
+				return
+			}
+			titleCtx := context.Background()
+			if caller, _ := auth.FromContext(ctx); caller != nil && caller.OrgID > 0 {
+				titleCtx = auth.WithContext(titleCtx, caller, nil)
+			} else {
+				titleCtx = auth.WithContext(titleCtx, &types.Caller{
+					Uin:   session.Uin,
+					OrgID: session.OrgID,
+				}, nil)
+			}
+			if err := p.titleUpdater.HandleSessionTitleRequest(titleCtx, session.PublicID); err != nil {
+				logs.Warnf("title update failed for session %s: %v", session.PublicID, err)
 			}
 		}()
 	}
@@ -617,9 +627,6 @@ func (p *MessagePoster) initRepoStructure(ctx context.Context, fullName string) 
 	gitignore := `# Leros runtime
 .leros/
 !.leros/memory/
-
-# Artifact outputs (served from object storage, not committed)
-artifacts/
 
 # User uploads (served from object storage, not committed)
 uploads/

@@ -14,6 +14,7 @@ import type {
   BackendSessionArtifactPayload,
   BackendSessionEventPayload,
   BackendToolCall,
+  BackendWorkTitleUpdatedPayload,
   SSEMessageEvent,
 } from "../api/types";
 import { workApi } from "../api/workApi";
@@ -128,8 +129,9 @@ function mapBackendMessage(msg: BackendMessage): Message {
     }
   }
   if (msg.attachments?.length) {
+    const messageCreatedAt = parseOptionalTimestamp(msg.created_at) ?? msg.timestamp;
     const attachments = msg.attachments
-      .map(mapBackendAttachment)
+      .map((attachment) => mapBackendAttachment(attachment, messageCreatedAt))
       .filter(
         (attachment): attachment is MessageAttachment =>
           attachment !== undefined,
@@ -143,6 +145,7 @@ function mapBackendMessage(msg: BackendMessage): Message {
 
 function mapBackendAttachment(
   attachment: BackendMessageAttachment,
+  messageCreatedAt?: number,
 ): MessageAttachment | undefined {
   const fileUploadId = attachment.file_upload_id?.trim();
   if (!fileUploadId) return undefined;
@@ -153,6 +156,7 @@ function mapBackendAttachment(
     name: attachment.name?.trim() || fileUploadId,
     mimeType: attachment.mime_type?.trim() || "application/octet-stream",
     size: attachment.size ?? 0,
+    createdAt: messageCreatedAt,
     url:
       attachment.PublicURL?.trim() ||
       attachment.public_url?.trim() ||
@@ -175,6 +179,7 @@ function mapComposerAttachment(
       attachment.file?.type ||
       "application/octet-stream",
     size: attachment.size,
+    createdAt: Date.now(),
     url: attachment.url,
     storageUri: attachment.storageUri,
   };
@@ -194,7 +199,7 @@ function mapComposerAttachments(
 function mapOutgoingAttachments(
   attachments?: Attachment[],
 ):
-  | Array<{ file_upload_id: string; name: string; mime_type: string }>
+  | Array<{ file_upload_id: string; name: string; mime_type: string; size: number }>
   | undefined {
   const mapped = attachments
     ?.filter(
@@ -208,6 +213,8 @@ function mapOutgoingAttachments(
         attachment.mimeType ||
         attachment.file?.type ||
         "application/octet-stream",
+      // 中文注释：上传接口已经返回真实大小，随消息落库后历史会话才能展示准确文件大小。
+      size: attachment.size,
     }));
   return mapped?.length ? mapped : undefined;
 }
@@ -1359,6 +1366,55 @@ function getSessionLocalMessages(
     );
 }
 
+function parseWorkTitleUpdatedPayload(
+  data: SSEMessageEvent,
+): BackendWorkTitleUpdatedPayload | null {
+  const payload = data.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  if (
+    typeof record.project_id !== "string" ||
+    typeof record.project_name !== "string"
+  ) {
+    return null;
+  }
+  return {
+    project_id: record.project_id,
+    project_name: record.project_name,
+    task_id: typeof record.task_id === "string" ? record.task_id : undefined,
+    task_title:
+      typeof record.task_title === "string" ? record.task_title : undefined,
+    session_id:
+      typeof record.session_id === "string"
+        ? record.session_id
+        : (data.session_id ?? ""),
+    session_title:
+      typeof record.session_title === "string"
+        ? record.session_title
+        : undefined,
+  };
+}
+
+function resolveProjectIdForSession(
+  fullState: {
+    activeTaskDetailProjectId?: string | null;
+    projects?: Array<{ id: string; tasks: Array<{ sessionId?: string }> }>;
+  },
+  sessionId: string,
+): string | null {
+  if (fullState.activeTaskDetailProjectId) {
+    return fullState.activeTaskDetailProjectId;
+  }
+  for (const project of fullState.projects ?? []) {
+    if (project.tasks.some((task) => task.sessionId === sessionId)) {
+      return project.id;
+    }
+  }
+  return null;
+}
+
 export class ChatActionImpl {
   readonly #set: SetState;
   readonly #get: () => ChatStore;
@@ -1614,6 +1670,19 @@ export class ChatActionImpl {
           const data = JSON.parse(event.data) as SSEMessageEvent;
           const eventType = event.type ?? data.type;
 
+          if (eventType === "work.title.updated") {
+            const workTitlePayload = parseWorkTitleUpdatedPayload(data);
+            if (workTitlePayload) {
+              const fullState = this.#fullGet() as {
+                applyWorkTitleUpdated?: (
+                  payload: BackendWorkTitleUpdatedPayload,
+                ) => void;
+              };
+              fullState.applyWorkTitleUpdated?.(workTitlePayload);
+            }
+            return;
+          }
+
           const msg = this.#get().messagesMap[assistantMsgId];
           if (msg) {
             const nextMsg = applySessionEventToMessage(msg, data, eventType, {
@@ -1642,6 +1711,18 @@ export class ChatActionImpl {
             void this.loadConversationMessages(sessionId, {
               resumeStream: false,
             });
+            const fullState = this.#fullGet() as {
+              activeTaskDetailProjectId?: string | null;
+              fetchProjectDetail?: (projectId: string) => Promise<void>;
+              projects?: Array<{
+                id: string;
+                tasks: Array<{ sessionId?: string }>;
+              }>;
+            };
+            const projectId = resolveProjectIdForSession(fullState, sessionId);
+            if (projectId) {
+              void fullState.fetchProjectDetail?.(projectId);
+            }
           }
         } catch (err) {
           // 正文只接受 run.completed 的最终结果，解析失败的流片段不再兜底写入正文。
