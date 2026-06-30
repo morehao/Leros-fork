@@ -344,11 +344,18 @@ func (s *sessionService) AddMessage(ctx context.Context, sessionID string, req *
 	}
 
 	mp := NewMessagePoster(s.db, s.eventbus, s.inferrer, s.giteaClient, s.giteaCfg, s.env, s)
-	message, err := mp.PostMessage(ctx, session, func(sequence int64) *types.SessionMessage {
+	message, err := mp.PostMessage(ctx, session, req.ExecutionMode, func(sequence int64) *types.SessionMessage {
 		return s.buildMessage(req, sequence)
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if session.ProjectID != nil && *session.ProjectID != 0 && req.Role == string(types.MessageRoleUser) {
+		// 中文注释：只在用户主动发言时刷新项目活跃时间，避免助手流式输出把项目顺序不断顶来顶去。
+		if err := db.TouchProjectUpdatedAt(ctx, s.db, *session.ProjectID, time.Now()); err != nil {
+			logs.WarnContextf(ctx, "touch project updated_at after add message %s: %v", session.PublicID, err)
+		}
 	}
 
 	return convertToContractSessionMessage(message, session.PublicID), nil
@@ -922,11 +929,14 @@ func (s *sessionService) StreamSessionEvents(ctx context.Context, sessionPID str
 		if err != nil {
 			return err
 		}
-		if replayState.StreamStartSeq > 0 && replayState.StreamStartSeq <= math.MaxInt64 {
-			streamStartSeq = int64(replayState.StreamStartSeq)
-		}
 		if replayState.StateStartSeq > 0 && replayState.StateStartSeq <= math.MaxInt64 {
 			stateStartSeq = int64(replayState.StateStartSeq)
+		}
+		// 两条 lane 在同一个 NATS stream 中，共享全局 Sequence.Stream 序号。
+		// state_start_seq（run.started 事件到达时记录）必然早于所有 run.stream 事件，
+		// 因此两条 lane 都使用 stateStartSeq 即可覆盖所有需要回放的内容。
+		if stateStartSeq > 0 {
+			streamStartSeq = stateStartSeq
 		}
 	}
 
@@ -1379,6 +1389,9 @@ func (s *sessionService) CompleteSessionMessage(ctx context.Context, req *contra
 	now := time.Now()
 	if err := db.UpdateLastMessageAt(ctx, s.db, session.ID, now); err != nil {
 		logs.WarnContextf(ctx, "update last_message_at for %s: %v", req.SessionID, err)
+	}
+	if err := db.IncrementMessageCount(ctx, s.db, session.ID); err != nil {
+		logs.WarnContextf(ctx, "increment message count for %s: %v", req.SessionID, err)
 	}
 
 	logs.DebugContextf(ctx, "persisted completed session message: session_id=%s seq=%d", req.SessionID, sequence)

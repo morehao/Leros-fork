@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -13,11 +12,13 @@ import (
 
 	"code.gitea.io/sdk/gitea"
 
+	"github.com/insmtx/Leros/backend/agent"
 	"github.com/insmtx/Leros/backend/config"
 	"github.com/insmtx/Leros/backend/internal/api/auth"
 	"github.com/insmtx/Leros/backend/internal/api/contract"
 	infradb "github.com/insmtx/Leros/backend/internal/infra/db"
 	"github.com/insmtx/Leros/backend/internal/infra/filestore"
+	"github.com/insmtx/Leros/backend/internal/infra/git"
 	eventbus "github.com/insmtx/Leros/backend/internal/infra/mq"
 	skilltoken "github.com/insmtx/Leros/backend/internal/skill"
 	skillcatalog "github.com/insmtx/Leros/backend/internal/skill/catalog"
@@ -63,6 +64,7 @@ func NewMessagePoster(db *gorm.DB, eb eventbus.EventBus, inferrer AssistantInfer
 func (p *MessagePoster) PostMessage(
 	ctx context.Context,
 	session *types.Session,
+	executionMode agent.ExecutionMode,
 	buildMessage func(sequence int64) *types.SessionMessage,
 ) (*types.SessionMessage, error) {
 	sequence, err := infradb.GetNextSequence(ctx, p.db, session.ID)
@@ -115,7 +117,7 @@ func (p *MessagePoster) PostMessage(
 
 	p.writeSkillInvokeResources(ctx, session, message)
 
-	if err := p.publishWorkerTask(ctx, session, message); err != nil {
+	if err := p.publishWorkerTask(ctx, session, message, executionMode); err != nil {
 		return nil, err
 	}
 
@@ -159,7 +161,7 @@ func (p *MessagePoster) RunNewMessage(
 	// 先补齐附件的可访问 URL，再把附件写入用户消息，避免前端回显和后续上下文拿不到附件信息。
 	resolveAttachmentURLs(ctx, p.db, caller.OrgID, req.Attachments)
 
-	message, err := p.PostMessage(ctx, o.taskSession, func(sequence int64) *types.SessionMessage {
+	message, err := p.PostMessage(ctx, o.taskSession, req.ExecutionMode, func(sequence int64) *types.SessionMessage {
 		msgType := req.MessageType
 		if msgType == "" {
 			msgType = string(types.MessageTypeText)
@@ -177,6 +179,10 @@ func (p *MessagePoster) RunNewMessage(
 	if err != nil {
 		logs.ErrorContextf(ctx, "NewMessage PostMessage failed: %v", err)
 		return nil, err
+	}
+	// 中文注释：项目页里通过 NewMessage 创建任务/首条消息后，要立即刷新项目活跃时间，供左侧列表排序使用。
+	if err := infradb.TouchProjectUpdatedAt(ctx, p.db, o.project.ID, time.Now()); err != nil {
+		logs.WarnContextf(ctx, "NewMessage touch project updated_at failed: %v", err)
 	}
 
 	logs.InfoContextf(ctx, "NewMessage completed: project=%s task=%s session=%s message=%d assistant=%d",
@@ -258,7 +264,9 @@ func (o *newMessageOrchestrator) resolveOrCreateProject() error {
 	}
 
 	if o.project.GiteaRepoFullName != "" {
-		o.poster.initRepoStructure(o.ctx, o.project.GiteaRepoFullName)
+		if err := git.InitRepoStructure(o.ctx, o.poster.giteaClient, o.project.GiteaRepoFullName); err != nil {
+			logs.WarnContextf(o.ctx, "[message_poster] init repo structure: %v", err)
+		}
 		logs.InfoContextf(o.ctx, "created project=%s org=%d user=%d repo=%s", projectID, o.caller.OrgID, o.caller.Uin, o.project.GiteaRepoFullName)
 	} else {
 		logs.InfoContextf(o.ctx, "created project=%s org=%d user=%d (no gitea)", projectID, o.caller.OrgID, o.caller.Uin)
@@ -388,7 +396,12 @@ func (p *MessagePoster) resolveRuntimeWorker(ctx context.Context, orgID, assista
 	return resolveRuntimeWorker(ctx, p.db, orgID, assistantID, p.inferrer)
 }
 
-func (p *MessagePoster) publishWorkerTask(ctx context.Context, session *types.Session, message *types.SessionMessage) error {
+func (p *MessagePoster) publishWorkerTask(
+	ctx context.Context,
+	session *types.Session,
+	message *types.SessionMessage,
+	executionMode agent.ExecutionMode,
+) error {
 	caller, _ := auth.FromContext(ctx)
 	orgID := session.OrgID
 	if orgID == 0 && caller != nil {
@@ -442,7 +455,8 @@ func (p *MessagePoster) publishWorkerTask(ctx context.Context, session *types.Se
 			RunID:     requestID,
 		},
 		messaging.RunCommandPayload{
-			TaskType: messaging.TaskTypeAgentRun,
+			TaskType:      messaging.TaskTypeAgentRun,
+			ExecutionMode: string(normalizeExecutionMode(executionMode)),
 			Actor: messaging.ActorContext{
 				UserID:      fmt.Sprintf("%d", session.Uin),
 				DisplayName: "",
@@ -474,6 +488,13 @@ func (p *MessagePoster) publishWorkerTask(ctx context.Context, session *types.Se
 	}
 	logs.DebugContextf(ctx, "Published message to topic %s: session_id=%s sequence=%d", topic, session.PublicID, message.Sequence)
 	return nil
+}
+
+func normalizeExecutionMode(mode agent.ExecutionMode) agent.ExecutionMode {
+	if mode == agent.ExecutionModePlan {
+		return agent.ExecutionModePlan
+	}
+	return agent.ExecutionModeDefault
 }
 
 func (p *MessagePoster) resolveWorkerTaskModel(ctx context.Context, orgID uint) (messaging.ModelOptions, error) {
@@ -613,74 +634,6 @@ func (p *MessagePoster) resolveWorkspaceIDs(ctx context.Context, session *types.
 
 func (p *MessagePoster) buildRepoName(orgID uint, projectPublicID string) string {
 	return fmt.Sprintf("%s-%d-%s", p.env, orgID, projectPublicID)
-}
-
-func (p *MessagePoster) initRepoStructure(ctx context.Context, fullName string) {
-	parts := strings.SplitN(fullName, "/", 2)
-	if len(parts) != 2 {
-		return
-	}
-	owner, repo := parts[0], parts[1]
-
-	emptyContent := base64.StdEncoding.EncodeToString([]byte(""))
-
-	gitignore := `# Leros runtime
-.leros/
-!.leros/memory/
-
-# User uploads (served from object storage, not committed)
-uploads/
-
-# Dependency directories
-node_modules/
-vendor/
-
-# Build/cache outputs
-dist/
-build/
-target/
-.cache/
-.cache*/
-tmp/
-temp/
-logs/
-log/
-
-# OS/editor noise
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-
-# Runtime logs
-*.log
-
-# Environment/secrets
-.env
-.env.*
-!.env.example
-`
-	gitignoreContent := base64.StdEncoding.EncodeToString([]byte(gitignore))
-
-	initFiles := []struct {
-		path    string
-		content string
-		msg     string
-	}{
-		{".gitignore", gitignoreContent, "chore: init .gitignore"},
-		{".leros/memory/.gitkeep", emptyContent, "chore: init .leros/memory/"},
-	}
-
-	for _, f := range initFiles {
-		if _, _, err := p.giteaClient.CreateFile(owner, repo, f.path, gitea.CreateFileOptions{
-			FileOptions: gitea.FileOptions{
-				Message: f.msg,
-			},
-			Content: f.content,
-		}); err != nil {
-			logs.WarnContextf(ctx, "[message_poster] init gitea file %s failed: %v", f.path, err)
-		}
-	}
 }
 
 // writeSkillInvokeResources parses /skill tokens from message content and writes
